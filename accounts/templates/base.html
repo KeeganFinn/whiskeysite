@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Whiskey App{% endblock %}</title>
+
+    <!-- Bootstrap 5 CSS -->
+    <link
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+        rel="stylesheet"
+    >
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+    .btn-whiskey {
+        background-color: #c9912b; /* whiskey amber */
+        border-color: #a8731f;
+        color: white;
+        }
+        .btn-whiskey:hover {
+            background-color: #b37f22;
+            border-color: #8c611a;
+        }
+
+    .fade-out-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(44, 44, 44, 0.85);
+        backdrop-filter: blur(4px);
+        z-index: 5000;
+        opacity: 0;
+        transition: opacity 0.5s ease;
+        }
+        .fade-out-overlay.show {
+            opacity: 1;
+        }
+
+    .page-fade-out {
+    opacity: 0;
+    transition: opacity 350ms ease-out;
+    }
+    .toast {
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.35s ease-out;
+    }
+
+    .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    .username-link:hover {
+    text-decoration: underline;
+    cursor: pointer;
+    }
+
+    </style>
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-expand-lg" style="background-color: #2C2C2C;">
+    <div class="container">
+        <a class="navbar-brand text-light" href="/">Whiskey Tracker</a>
+
+        <div>
+        {% if user.is_authenticated %}
+            <div class="dropdown">
+                <button class="btn btn-whiskey dropdown-toggle" type="button" id="userMenu" data-bs-toggle="dropdown" aria-expanded="false">
+                    {{ user.username }}
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userMenu">
+                <li>
+                    <a class="dropdown-item d-flex justify-content-between align-items-center" href="{% url 'home' %}">
+                        Home
+                        <i class="bi bi-house-door-fill text-secondary"></i>
+                    </a>
+                </li>
+
+                <li>
+                    <a class="dropdown-item d-flex justify-content-between" href="/feed/">
+                        Feed
+                        <i class="bi bi-newspaper"></i>
+                    </a>
+                </li>
+
+                <li>
+                    <a class="dropdown-item d-flex justify-content-between" href="/discover/">
+                        Discover
+                        <i class="bi bi-people-fill"></i>
+                    </a>
+                </li>
+
+                <li>
+                    <a class="dropdown-item d-flex justify-content-between" href="/inventory/">
+                        Inventory
+                        <i class="bi bi-box-seam"></i>
+                    </a>
+
+                    {% if perms.accounts.can_review_distillery %}
+                    <a class="dropdown-item d-flex justify-content-between align-items-center"
+                       href="{% url 'distillery_review_list' %}">
+                        Distillery
+                        <i class="bi bi-clipboard-check"></i>
+                    </a>
+                    {% endif %}
+
+                <li>
+                    <a class="dropdown-item d-flex justify-content-between align-items-center" href="/profile/">
+                        Profile
+                        <i class="bi bi-person-fill text-secondary"></i>
+                    </a>
+                </li>
+
+                <li>
+                    <a class="dropdown-item d-flex justify-content-between align-items-center" href="/settings/">
+                        Settings
+                        <i class="bi bi-gear-fill text-secondary"></i>
+                    </a>
+                </li>
+
+                <li><hr class="dropdown-divider"></li>
+
+                <li>
+                    <a class="dropdown-item d-flex justify-content-between align-items-center" href="/logout/">
+                        Logout
+                        <i class="bi bi-box-arrow-right text-danger"></i>
+                    </a>
+                </li>
+                </ul>
+            </div>
+        {% else %}
+            <a class="btn btn-whiskey me-2" href="/login/">Login</a>
+            <a class="btn btn-whiskey" href="/register/">Register</a>
+        {% endif %}
+        </div>
+
+    </div>
+</nav>
+
+<div class="container">
+    {% block content %}{% endblock %}
+</div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+        <!-- Bootstrap Toast Container -->
+        <div class="toast align-items-center text-bg-{{ message.tags }} border-0 mb-2">
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="toast align-items-center text-bg-{{ message.tags }} border-0 mb-2" role="alert" aria-live="assertive" aria-atomic="true">
+                        <div class="d-flex">
+                            <div class="toast-body">
+                                {{ message }}
+                            </div>
+                            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                        </div>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        </div>
+
+
+
+        <script>
+            const toastElList = [].slice.call(document.querySelectorAll('.toast'))
+            toastElList.map(function (toastEl) {
+                return new bootstrap.Toast(toastEl).show()
+            })
+        </script>
+        <!-- PASSWORD STRENGTH SCRIPT -->
+        <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const passwordInput = document.querySelector("#id_password1")
+                               || document.querySelector("#id_new_password1");
+            if (!passwordInput) return;
+
+            const strengthBar = document.getElementById("password-strength-bar");
+            const strengthText = document.getElementById("password-strength-text");
+
+            passwordInput.addEventListener("input", function () {
+                const val = passwordInput.value;
+
+                // If password is blank, hide everything
+                if (!val) {
+                    strengthBar.style.width = "0%";
+                    strengthBar.style.backgroundColor = "#ddd";
+                    strengthText.textContent = "";
+                    return;
+                }
+
+                let score = 0;
+                if (val.length >= 8) score += 1;
+                if (/[A-Z]/.test(val)) score += 1;
+                if (/[0-9]/.test(val)) score += 1;
+                if (/[^A-Za-z0-9]/.test(val)) score += 1;
+
+                let color = "#dd3333";  // weak (red)
+                let width = "25%";
+                let label = "Weak";
+
+                if (score === 2) {
+                    color = "#ff9900";
+                    width = "50%";
+                    label = "Medium";
+                } else if (score === 3) {
+                    color = "#c9912b"; // whiskey gold
+                    width = "75%";
+                    label = "Strong";
+                } else if (score === 4) {
+                    color = "#28a745"; // green
+                    width = "100%";
+                    label = "Very Strong";
+                }
+
+                strengthBar.style.backgroundColor = color;
+                strengthBar.style.width = width;
+                strengthText.textContent = label;
+            });
+        });
+        </script>
+        <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            document.querySelectorAll(".toggle-password").forEach(button => {
+                button.addEventListener("click", function () {
+                    const input = this.parentElement.querySelector("input");
+                    const icon = this.querySelector("i");
+                    const isPassword = input.getAttribute("type") === "password";
+
+                    // Toggle input type
+                    input.setAttribute("type", isPassword ? "text" : "password");
+
+                    // Toggle icon
+                    icon.classList.toggle("bi-eye");
+                    icon.classList.toggle("bi-eye-slash");
+                });
+            });
+        });
+        </script>
+        <script>
+        document.addEventListener("DOMContentLoaded", function () {
+
+            const bioInput = document.getElementById("bio-input");
+            const counter = document.getElementById("bio-counter");
+
+            if (!bioInput || !counter) return;
+
+            const maxLen = parseInt(bioInput.getAttribute("maxlength"));
+
+            function updateCounter() {
+                const length = bioInput.value.length;
+                counter.textContent = `${length} / ${maxLen}`;
+
+                // Change color based on how close the limit is
+                if (length > maxLen * 0.9) {
+                    counter.classList.remove("text-muted");
+                    counter.classList.add("text-danger");
+                } else {
+                    counter.classList.add("text-muted");
+                    counter.classList.remove("text-danger");
+                }
+            }
+
+            // Update on load & on input
+            updateCounter();
+            bioInput.addEventListener("input", updateCounter);
+        });
+        </script>
+</body>
+</html>

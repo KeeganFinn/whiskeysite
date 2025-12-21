@@ -1,0 +1,56 @@
+<div class="modal fade" id="reviewBottleModal{{ bottle.id }}" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content rounded-4">
+
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold">
+            Review: {{ bottle.name }}
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <form method="POST" action="{% url 'submit_bottle_review' bottle.id %}">
+        {% csrf_token %}
+
+        <div class="modal-body">
+
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Nose (1–10)</label>
+              {{ form.nose }}
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Taste (1–10)</label>
+              {{ form.taste }}
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Finish (1–10)</label>
+              {{ form.finish }}
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Value (1–10)</label>
+              {{ form.value }}
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">Notes</label>
+              {{ form.notes }}
+            </div>
+          </div>
+
+        </div>
+
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-whiskey w-100">
+            Save Review
+          </button>
+        </div>
+
+      </form>
+
+    </div>
+  </div>
+</div>

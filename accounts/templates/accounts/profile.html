@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Account Overview{% endblock %}
+{% block content %}
+
+<div class="col-lg-6 offset-lg-3 mt-4">
+    <div class="card shadow-lg border-0 rounded-4">
+        <div class="card-body p-4 text-center">
+
+            <!-- Avatar -->
+            <img src="{{ profile.avatar.url }}"
+                 class="rounded-circle mb-3"
+                 style="width: 130px; height: 130px; object-fit: cover;">
+
+            <h3 class="fw-bold">
+                <a href="/profile/{{ profile_user.username }}/" class="text-dark text-decoration-none username-link">
+                    {{ profile_user.username }}
+                </a>
+            </h3>
+            <p class="text-muted mb-1">{{ profile_user.email }}</p>
+
+            {% if profile.bio %}
+                <p class="mt-2">{{ profile.bio }}</p>
+            {% else %}
+                <p class="mt-2 text-muted"><i>No bio added yet.</i></p>
+            {% endif %}
+
+            <!-- Follow/Unfollow (ONLY for OTHER profiles) -->
+            {% if request.user != profile_user %}
+                <div class="text-center mt-3">
+                    {% if is_following %}
+                        <a href="/unfollow/{{ profile_user.id }}/" class="btn btn-danger btn-sm">Unfollow</a>
+                    {% else %}
+                        <a href="/follow/{{ profile_user.id }}/" class="btn btn-whiskey btn-sm">Follow</a>
+                    {% endif %}
+                </div>
+            {% endif %}
+
+            <!-- Followers / Following Counts -->
+            <div class="d-flex justify-content-center gap-4 mt-3">
+
+                <div class="text-center">
+                    <a href="/profile/{{ profile_user.username }}/followers/" class="text-dark text-decoration-none">
+                        <span class="fw-bold">{{ followers_count }}</span><br>
+                        <span class="text-muted small">Followers</span>
+                    </a>
+                </div>
+
+                <div class="text-center">
+                    <a href="/profile/{{ profile_user.username }}/following/" class="text-dark text-decoration-none">
+                        <span class="fw-bold">{{ following_count }}</span><br>
+                        <span class="text-muted small">Following</span>
+                    </a>
+                </div>
+
+            </div>
+            {% if profile.share_stats %}
+            <div class="card shadow-sm mt-4 p-3">
+                <h5 class="fw-bold mb-3">Whiskey Stats</h5>
+
+                <div class="row text-center">
+
+                    <div class="col-6 mb-3">
+                        <h6 class="fw-bold">{{ stats.total }}</h6>
+                        <p class="text-muted small mb-0">Total Bottles</p>
+                    </div>
+
+                    <div class="col-6 mb-3">
+                        <h6 class="fw-bold">${{ stats.total_value|floatformat:2 }}</h6>
+                        <p class="text-muted small mb-0">Total Value</p>
+                    </div>
+
+                    <div class="col-6 mb-3">
+                        <h6 class="fw-bold">{{ stats.unopened }}</h6>
+                        <p class="text-muted small mb-0">Unopened</p>
+                    </div>
+
+                    <div class="col-6 mb-3">
+                        <h6 class="fw-bold">{{ stats.opened }}</h6>
+                        <p class="text-muted small mb-0">Opened</p>
+                    </div>
+
+                    <div class="col-6 mb-3">
+                        <h6 class="fw-bold">{{ stats.finished }}</h6>
+                        <p class="text-muted small mb-0">Finished</p>
+                    </div>
+
+                    <div class="col-6 mb-1">
+                        <h6 class="fw-bold">
+                            {% if stats.common_type %}
+                                {{ stats.common_type.whiskey_type|title }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </h6>
+                        <p class="text-muted small mb-0">Most Common Type</p>
+                    </div>
+
+                </div>
+
+            </div>
+            {% endif %}
+            <hr>
+
+            <!-- Account Details -->
+            <div class="text-start mt-3">
+                <p><strong>Date Joined:</strong> {{ profile_user.date_joined|date:"F j, Y" }}</p>
+                <p><strong>Last Login:</strong> {{ profile_user.last_login|date:"F j, Y, g:i A" }}</p>
+            </div>
+
+            <!-- Username History (ONLY for your own account) -->
+            {% if request.user == profile_user and history %}
+                <hr>
+                <p class="text-muted mt-3">
+                    <strong>Formerly known as:</strong>
+                    {% for entry in history %}
+                        {{ entry.old_username }}{% if not forloop.last %}, {% endif %}
+                    {% endfor %}
+                </p>
+            {% endif %}
+
+            <hr>
+
+            <!-- Quick Actions (ONLY for your profile) -->
+            {% if request.user == profile_user %}
+            <div class="d-grid gap-2 mt-3">
+
+                <a href="/settings/profile/" class="btn btn-whiskey">Edit Profile</a>
+                <a href="/settings/username/" class="btn btn-outline-secondary">Change Username</a>
+                <a href="/settings/email/" class="btn btn-outline-secondary">Change Email</a>
+                <a href="/settings/password/" class="btn btn-outline-secondary">Change Password</a>
+
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+
+<div class="col-lg-6 offset-lg-3 mt-4">
+    <div class="card shadow-lg border-0 rounded-4">
+        <div class="card-body p-4">
+
+            <h3 class="fw-bold mb-4 text-center">Account Settings</h3>
+
+            <!-- Username Cooldown Banner -->
+            {% if days_remaining > 0 %}
+                <div class="alert alert-warning text-center fw-bold">
+                    You can change your username again in {{ days_remaining }} day{{ days_remaining|pluralize }}.
+                </div>
+            {% else %}
+                <div class="alert alert-success text-center fw-bold">
+                    You can change your username now.
+                </div>
+            {% endif %}
+
+            <hr>
+
+            <!-- Settings Options -->
+            <div class="list-group">
+
+                <a href="/settings/profile/" class="list-group-item list-group-item-action d-flex justify-content-between">
+                    Edit Profile
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+
+                <!-- Username disabled if cooldown active -->
+                {% if days_remaining > 0 %}
+                    <button class="list-group-item list-group-item-action d-flex justify-content-between disabled" style="cursor:not-allowed;">
+                        Change Username
+                        <i class="bi bi-lock-fill text-danger"></i>
+                    </button>
+                {% else %}
+                    <a href="/settings/username/" class="list-group-item list-group-item-action d-flex justify-content-between">
+                        Change Username
+                        <i class="bi bi-chevron-right"></i>
+                    </a>
+                {% endif %}
+
+                <a href="/settings/email/" class="list-group-item list-group-item-action d-flex justify-content-between">
+                    Change Email
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+
+                <a href="/settings/password/" class="list-group-item list-group-item-action d-flex justify-content-between">
+                    Change Password
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- Username Change Blocked Modal -->
+{% if blocked_days %}
+<div class="modal fade show" id="usernameBlockModal" tabindex="-1" style="display:block;" aria-modal="true" role="dialog">
+    <div class="modal-dialog">
+        <div class="modal-content">
+
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title fw-bold">Username Change Restricted</h5>
+            </div>
+
+            <div class="modal-body">
+                You can change your username again in
+                <strong>{{ blocked_days }}</strong> day{{ blocked_days|pluralize }}.
+            </div>
+
+            <div class="modal-footer">
+                <button id="usernameModalOk" class="btn btn-whiskey w-100">Okay</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    document.getElementById("usernameModalOk").addEventListener("click", () => {
+
+        // Fade the entire page smoothly
+        document.body.classList.add("page-fade-out");
+
+        // Redirect after fade completes
+        setTimeout(() => {
+            window.location.href = "/profile/";
+        }, 350);
+    });
+});
+</script>
+{% endif %}
+
+{% endblock %}

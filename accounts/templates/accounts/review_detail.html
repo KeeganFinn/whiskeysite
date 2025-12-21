@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Review Distillery{% endblock %}
+
+{% block content %}
+
+<div class="col-lg-8 offset-lg-2 mt-4">
+
+    <h3 class="fw-bold mb-3">Review Distillery</h3>
+
+    <div class="card shadow-sm p-4 mb-4">
+        <h5 class="fw-bold mb-1">{{ distillery.name }}</h5>
+
+        <p class="text-muted small">
+            Added by {{ distillery.added_by|default:"Unknown" }}
+            • {{ distillery.created_at|date:"M j, Y" }}
+        </p>
+    </div>
+
+    <!-- APPROVE FORM -->
+    <div class="card shadow-sm p-4 mb-4">
+        <h6 class="fw-bold mb-3">Approve as New Distillery</h6>
+
+        <form method="POST">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="approve">
+
+            <div class="mb-3">
+                <label class="form-label">Country</label>
+                <input type="text"
+                       name="country"
+                       class="form-control"
+                       value="{{ distillery.country|default:'' }}">
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Region</label>
+                <input type="text"
+                       name="region"
+                       class="form-control"
+                       value="{{ distillery.region|default:'' }}">
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Climate</label>
+
+                <select name="climate" class="form-select">
+                    <option value="">— Select climate —</option>
+
+                    {% for code,label in CLIMATE_CHOICES %}
+                        <option value="{{ code }}"
+                            {% if distillery.climate == code %}
+                                selected
+                            {% elif not distillery.climate and suggested_climate == code %}
+                                selected
+                            {% endif %}>
+                            {{ label }}
+                        </option>
+                    {% endfor %}
+                </select>
+
+                {% if suggested_climate and not distillery.climate %}
+                    <div class="form-text text-success">
+                        Suggested climate based on country & region
+                    </div>
+                {% endif %}
+            </div>
+
+
+            <button type="submit" class="btn btn-success w-100">
+                Approve Distillery
+            </button>
+        </form>
+    </div>
+
+    <!-- DUPLICATE FORM -->
+    <div class="card shadow-sm p-4">
+        <h6 class="fw-bold mb-3">Mark as Duplicate</h6>
+
+        <form method="POST">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="duplicate">
+
+            <div class="mb-3">
+                <label class="form-label">Duplicate of</label>
+                <select name="canonical" class="form-select" required>
+                    <option value="">— Select distillery —</option>
+                    {% for d in canonical_choices %}
+                        <option value="{{ d.id }}">{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <button type="submit" class="btn btn-danger w-100">
+                Mark as Duplicate
+            </button>
+        </form>
+    </div>
+
+</div>
+
+{% endblock %}

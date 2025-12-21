@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Feed{% endblock %}
+{% block content %}
+
+<div class="col-lg-6 offset-lg-3 mt-4">
+
+    <div class="d-flex justify-content-between mb-3">
+        <h3 class="fw-bold">Whiskey Feed</h3>
+
+        <!-- Open Modal Instead of Redirecting -->
+        <button class="btn btn-whiskey" data-bs-toggle="modal" data-bs-target="#createPostModal">
+            <i class="bi bi-pencil-square"></i> Write a Post
+        </button>
+    </div>
+
+    {% for post in posts %}
+        <div class="card shadow-sm mb-3">
+            <div class="card-body">
+                <h6 class="fw-bold">
+                    <a href="/profile/{{ post.user.username }}/" class="text-dark text-decoration-none username-link">
+                        {{ post.user.username }}
+                    </a>
+                </h6>
+                <p>{{ post.content }}</p>
+                <p class="text-muted small">{{ post.created_at|date:"F j, g:i A" }}</p>
+            </div>
+        </div>
+    {% empty %}
+        <p class="text-muted">No posts yet. Be the first to write one!</p>
+    {% endfor %}
+
+</div>
+
+<!-- Create Post Modal -->
+<div class="modal fade" id="createPostModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content rounded-4">
+
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold">Write a Post</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <form method="POST" action="/post/create/">
+        {% csrf_token %}
+        <div class="modal-body">
+          {{ form.content }}
+        </div>
+
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-whiskey w-100">
+            Post
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+</div>
+{% endblock %}

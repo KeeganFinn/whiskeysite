@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+
+<div class="col-md-6 offset-md-3">
+    <div class="card shadow-lg border-0 rounded-4">
+        <div class="card-body p-4">
+            <h3 class="text-center mb-4 fw-bold">Welcome to the Whiskey Tracker</h3>
+
+            <p class="lead text-center">
+                Track bottles, reviews, and tasting events — all in one place.
+            </p>
+
+            {% if user.is_authenticated %}
+                <p class="text-center fw-bold mt-3">Hello, {{ user.username }}!</p>
+            {% else %}
+                <div class="text-center mt-4">
+                    <a href="/login/" class="btn btn-whiskey me-2">Login</a>
+                    <a href="/register/" class="btn btn-whiskey">Register</a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% endblock %}

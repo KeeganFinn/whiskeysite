@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Edit Profile{% endblock %}
+{% block content %}
+
+<div class="col-md-6 offset-md-3">
+    <div class="card shadow-lg border-0 rounded-4">
+        <div class="card-body p-4">
+            <h3 class="text-center mb-4 fw-bold">Edit Profile</h3>
+
+            <form method="POST" enctype="multipart/form-data">
+                {% csrf_token %}
+
+                <div class="mb-3">
+                    <label class="form-label">Profile Picture</label><br>
+                    <img src="{{ user.userprofile.avatar.url }}" width="120" height="120" class="rounded-circle mb-2">
+                    {{ form.avatar }}
+                </div>
+                <div class="form-check form-switch my-3">
+                    {{ form.share_stats }}
+                    <label class="form-check-label ms-2" for="{{ form.share_stats.id_for_label }}">
+                        Share inventory stats on profile
+                    </label>
+                </div>
+            <div class="mb-3">
+                <label class="form-label">Bio</label>
+                {{ form.bio }}
+                <div class="text-end">
+                    <small id="bio-counter" class="text-muted">0 / 300</small>
+                </div>
+            </div>
+
+                <button class="btn btn-whiskey w-100 mt-3">Save Changes</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

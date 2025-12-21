@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Register{% endblock %}
+{% block content %}
+
+<div class="col-md-6 offset-md-3">
+    <div class="card shadow-lg border-0 rounded-4">
+        <div class="card-body p-4">
+            <h3 class="text-center mb-4 fw-bold">Create an Account</h3>
+
+            <form method="POST">
+                {% csrf_token %}
+
+                <div class="mb-3">
+                    <label class="form-label">Email</label>
+                    {{ form.email }}
+                </div>
+
+                <!-- Username -->
+                <div class="mb-3">
+                    <label class="form-label">Username</label>
+                    {{ form.username }}
+                </div>
+
+                <!-- Password -->
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <div class="input-group">
+                        {{ form.password1 }}
+                        <button type="button" class="btn btn-outline-secondary toggle-password">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+
+                    <!-- Password Strength Meter -->
+                    <div class="mt-2">
+                        <div id="password-strength-bar"
+                        style="height: 6px; border-radius: 3px; background-color: #ddd; width: 0%; transition: width 0.4s ease, background-color 0.4s ease;">
+                        </div>
+                        <small id="password-strength-text" class="text-muted"></small>
+                    </div>
+
+                    <div class="form-text mt-2">
+                        {{ form.password1.help_text|safe }}
+                    </div>
+                </div>
+
+                <!-- Confirm Password -->
+                <div class="mb-3">
+                    <label class="form-label">Confirm Password</label>
+                    <div class="input-group">
+                        {{ form.password2 }}
+                        <button type="button" class="btn btn-outline-secondary toggle-password">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                    </div>
+                </div>
+
+
+                <button type="submit" class="btn btn-whiskey w-100 py-2">
+                    Register
+                </button>
+            </form>
+
+            <p class="mt-3 text-center">
+                Already have an account?
+                <a href="/login/">Login</a>
+            </p>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
