@@ -53,4 +53,10 @@ urlpatterns = [
     path("reviews/bottle/<int:bottle_id>/",views.submit_bottle_review,name="submit_bottle_review"),
     path("bottles/<int:pk>/review/", views.add_review, name="add_review"),
 
+    # Bottle Reviews
+    path("canonical-bottles/<int:pk>/", views.canonical_bottle_detail, name="canonical_bottle_detail"),
+    path("reviews/", views.review_search, name="review_search"),
+    path("canonical-bottles/<int:pk>/review/",views.add_canonical_review,name="add_canonical_review"),
+    path("inventory-bottles/<int:pk>/reviews/",views.inventory_to_canonical,name="inventory_to_canonical"),
+
 ]

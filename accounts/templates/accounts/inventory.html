@@ -182,7 +182,12 @@
              data-search="{{ bottle.name }} {{ bottle.distillery.name }} {{ bottle.get_whiskey_type_display }} {{ bottle.store_name }}">
             <div class="card-body">
 
-                <h5 class="fw-bold">{{ bottle.name }}</h5>
+                <h5 class="fw-bold">
+                  <a href="{% url 'inventory_to_canonical' bottle.id %}?source=inventory"
+                     class="text-decoration-none text-dark">
+                    {{ bottle.name }}
+                  </a>
+                </h5>
 
                 {% if bottle.distillery %}
                     <p class="text-muted mb-1">
@@ -263,7 +268,13 @@
 
                     <!-- LEFT: Bottle info -->
                     <div>
-                        <strong>{{ bottle.name }}</strong><br>
+                        <strong>
+                            <a href="{% url 'inventory_to_canonical' bottle.id %}?source=inventory"
+                               class="text-decoration-none text-reset fw-bold">
+                              {{ bottle.name }}
+                            </a>
+                        </strong><br>
+
 
                         <span class="text-muted small">
                             {% if bottle.distillery %}
@@ -349,7 +360,13 @@
                 <tr class="bottle-item"
                     data-search="{{ bottle.name }} {{ bottle.distillery.name }} {{ bottle.get_whiskey_type_display }} {{ bottle.store_name }} {{ bottle.price }}">
 
-                    <td>{{ bottle.name }}</td>
+                    <td>
+                        <a href="{% url 'inventory_to_canonical' bottle.id %}?source=inventory"
+                           class="text-decoration-none text-reset ">
+                          {{ bottle.name }}
+                        </a>
+                    </td>
+
 
                     <td>
                         {% if bottle.distillery %}
@@ -602,6 +619,8 @@
 
           <form method="POST" action="{% url 'add_review' bottle.id %}">
             {% csrf_token %}
+
+            <input type="hidden" name="from" value="inventory">
 
             <div class="modal-body">
               <div class="row g-3">

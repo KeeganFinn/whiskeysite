@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}{{ canonical.name }}{% endblock %}
+
+{% block content %}
+<div class="col-lg-8 offset-lg-2 mt-4">
+
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h3 class="fw-bold mb-1">{{ canonical.name }}</h3>
+
+      <div class="text-muted">
+        {% if canonical.distillery %}
+          {{ canonical.distillery.name }} •
+        {% endif %}
+        {{ canonical.get_whiskey_type_display }}
+        {% if canonical.age %} • {{ canonical.age }} years{% endif %}
+        {% if canonical.proof %} • {{ canonical.proof }} proof{% endif %}
+        {% if canonical.is_store_pick and canonical.store_name %}
+          • Store Pick: {{ canonical.store_name }}
+        {% endif %}
+      </div>
+    </div>
+
+    {% if source == "review_search" %}
+      <a class="btn btn-outline-secondary btn-sm" href="{% url 'review_search' %}">
+        Back to Review Bottles
+      </a>
+    {% elif source == "inventory" %}
+      <a class="btn btn-outline-secondary btn-sm" href="{% url 'inventory' %}">
+        Back to Inventory
+      </a>
+    {% else %}
+      <a class="btn btn-outline-secondary btn-sm" href="{% url 'home' %}">
+        Back to Home
+      </a>
+    {% endif %}
+
+  </div>
+
+  <div class="card shadow-sm p-3 mb-3">
+    <div class="d-flex justify-content-between align-items-center">
+      <div>
+        <div class="text-muted small">Average Rating</div>
+        <div class="fs-3 fw-bold">{{ avg_score|floatformat:1 }}</div>
+      </div>
+
+      <div class="text-end">
+        <div class="text-muted small">Total Reviews</div>
+        <div class="fs-3 fw-bold">{{ review_count }}</div>
+      </div>
+    </div>
+
+    <hr class="my-3">
+
+    <div class="text-muted small">
+      <a href="{% url 'add_canonical_review' canonical.id %}?source={{ source }}"
+        class="btn btn-whiskey btn-sm">
+          Add Review
+      </a>
+    </div>
+  </div>
+
+</div>
+
+<div class="card shadow-sm p-3">
+
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h5 class="fw-bold mb-0">Reviews</h5>
+
+    <div class="btn-group btn-group-sm" role="group">
+      <a href="?show=all"
+         class="btn {% if show == 'all' %}btn-whiskey{% else %}btn-outline-secondary{% endif %}">
+        All Reviews
+      </a>
+      <a href="?show=mine"
+         class="btn {% if show == 'mine' %}btn-whiskey{% else %}btn-outline-secondary{% endif %}">
+        My Reviews
+      </a>
+    </div>
+  </div>
+
+  {% if reviews %}
+    <div class="form-check form-switch mb-3">
+      <input class="form-check-input"
+             type="checkbox"
+             id="toggleNotes"
+             checked>
+      <label class="form-check-label" for="toggleNotes">
+        Show notes
+      </label>
+    </div>
+
+    {% for review in reviews %}
+      <div class="border rounded p-3 mb-3 review-card">
+
+        <div class="d-flex justify-content-between">
+          <strong>
+            {{ review.reviewer.username }}
+            {% if review.reviewer == request.user %}
+              <span class="badge bg-whiskey ms-1">You</span>
+            {% endif %}
+          </strong>
+
+          <span class="fw-bold">
+            {{ review.final_score|floatformat:1 }}
+          </span>
+        </div>
+
+        <div class="small text-muted mb-2">
+          {{ review.created_at|date:"F j, Y" }}
+        </div>
+
+        <div class="row text-center mb-2 small">
+          <div class="col">Nose<br><strong>{{ review.nose }}</strong></div>
+          <div class="col">Taste<br><strong>{{ review.taste }}</strong></div>
+          <div class="col">Finish<br><strong>{{ review.finish }}</strong></div>
+          <div class="col">Value<br><strong>{{ review.value }}</strong></div>
+        </div>
+
+        {% if review.notes %}
+          <div class="review-notes text-muted small">
+            {{ review.notes|linebreaksbr }}
+          </div>
+        {% endif %}
+
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="text-muted mb-0">No reviews yet.</p>
+  {% endif %}
+
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const toggle = document.getElementById("toggleNotes");
+  if (!toggle) return;
+
+  toggle.addEventListener("change", function () {
+    document.querySelectorAll(".review-notes").forEach(el => {
+      el.style.display = toggle.checked ? "" : "none";
+    });
+  });
+});
+</script>
+
+{% endblock %}

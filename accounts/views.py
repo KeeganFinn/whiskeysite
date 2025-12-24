@@ -1,11 +1,13 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth import login, authenticate, logout
 from django.contrib.auth.forms import UserCreationForm, AuthenticationForm
+from django.urls import reverse
+
 from .forms import CustomUserCreationForm, CustomPasswordChangeForm, BottleReviewForm
 from django.contrib.auth import update_session_auth_hash
 from django.contrib import messages
 from .forms import ProfileUpdateForm
-from .models import UsernameHistory, DistilleryAuditLog, BottleReview
+from .models import UsernameHistory, DistilleryAuditLog, BottleReview, CanonicalBottle
 from django.utils import timezone
 from datetime import timedelta
 from .forms import ChangeUsernameForm
@@ -907,17 +909,157 @@ def submit_bottle_review(request, bottle_id):
 
 @login_required
 def add_review(request, pk):
-    bottle = get_object_or_404(Bottle, pk=pk)
-
+    inventory_bottle = get_object_or_404(Bottle, pk=pk, user=request.user)
+    source = request.POST.get("source", "inventory")
     if request.method == "POST":
+        # 1) Ensure canonical exists/linked
+        if inventory_bottle.canonical_bottle is None:
+            canonical, _created = CanonicalBottle.objects.get_or_create(
+                name=inventory_bottle.name,
+                distillery=inventory_bottle.distillery,
+                whiskey_type=inventory_bottle.whiskey_type,
+                age=inventory_bottle.age,
+                proof=inventory_bottle.proof,
+                is_store_pick=inventory_bottle.is_store_pick,
+                store_name=inventory_bottle.store_name if inventory_bottle.is_store_pick else None,
+                defaults={"created_by": request.user},
+            )
+            inventory_bottle.canonical_bottle = canonical
+            inventory_bottle.save(update_fields=["canonical_bottle"])
+        else:
+            canonical = inventory_bottle.canonical_bottle
+
+        # 2) Create review linked to canonical
         BottleReview.objects.create(
-            bottle=bottle,
-            user=request.user,
-            nose=request.POST["nose"],
-            taste=request.POST["taste"],
-            finish=request.POST["finish"],
-            value=request.POST["value"],
+            bottle=canonical,
+            reviewer=request.user,
+            nose=int(request.POST["nose"]),
+            taste=int(request.POST["taste"]),
+            finish=int(request.POST["finish"]),
+            value=int(request.POST["value"]),
             notes=request.POST.get("notes", ""),
         )
 
+        return redirect(f"{reverse('canonical_bottle_detail', args=[inventory_bottle.canonical_bottle.id])}?from={source}")
+
     return redirect("inventory")
+
+@login_required
+def canonical_bottle_detail(request, pk):
+    canonical = get_object_or_404(CanonicalBottle, pk=pk)
+
+
+    show = request.GET.get("show", "all")
+
+    qs = BottleReview.objects.filter(bottle=canonical).select_related("reviewer")
+
+    if show == "mine":
+        reviews = qs.filter(reviewer=request.user)
+    else:
+        reviews = qs
+
+    agg = qs.aggregate(
+        avg_score=Avg("final_score"),
+        review_count=Count("id"),
+    )
+
+    source = request.GET.get("from", "review_search")
+
+    return render(
+        request,
+        "accounts/canonical_bottle_detail.html",
+        {
+            "canonical": canonical,
+            "reviews": reviews,
+            "avg_score": agg["avg_score"] or 0,
+            "review_count": agg["review_count"] or 0,
+            "show": show,
+            "source": source,
+        },
+    )
+
+@login_required
+def review_search(request):
+    q = (request.GET.get("q") or "").strip()
+
+    bottles = CanonicalBottle.objects.select_related("distillery")
+
+    if q:
+        bottles = bottles.filter(
+            Q(name__icontains=q) |
+            Q(distillery__name__icontains=q)
+        )
+
+    # Add aggregate info per bottle for display (avg + count)
+    bottles = bottles.annotate(
+        avg_score=Avg("reviews__final_score"),
+        review_count=Count("reviews")
+    ).order_by("name")[:200]  # cap results for now
+
+    return render(
+        request,
+        "accounts/review_search.html",
+        {
+            "q": q,
+            "bottles": bottles,
+        }
+    )
+
+@login_required
+def add_canonical_review(request, pk):
+    canonical = get_object_or_404(CanonicalBottle, pk=pk)
+
+    # IMPORTANT: preserve where the user came from
+    source = request.POST.get("source") or request.GET.get("source") or "review_search"
+
+    if request.method == "POST":
+        BottleReview.objects.create(
+            bottle=canonical,
+            reviewer=request.user,
+            nose=int(request.POST["nose"]),
+            taste=int(request.POST["taste"]),
+            finish=int(request.POST["finish"]),
+            value=int(request.POST["value"]),
+            notes=request.POST.get("notes", "")[:1000],  # HARD CAP
+        )
+
+        # Redirect back to canonical WITH source
+        url = reverse("canonical_bottle_detail", args=[canonical.id])
+        return redirect(f"{url}?source={source}")
+
+    return render(
+        request,
+        "accounts/add_canonical_review.html",
+        {
+            "canonical": canonical,
+            "source": source,  # pass to template
+        },
+    )
+
+@login_required
+def inventory_to_canonical(request, pk):
+    bottle = get_object_or_404(Bottle, pk=pk, user=request.user)
+
+    # Ensure canonical exists
+    if not bottle.canonical_bottle:
+        canonical, _ = CanonicalBottle.objects.get_or_create(
+            name=bottle.name,
+            defaults={
+                "distillery": bottle.distillery,
+                "whiskey_type": bottle.whiskey_type,
+                "age": bottle.age,
+                "proof": bottle.proof,
+                "is_store_pick": bottle.is_store_pick,
+                "store_name": bottle.store_name,
+                "created_by": request.user,
+            },
+        )
+        bottle.canonical_bottle = canonical
+        bottle.save(update_fields=["canonical_bottle"])
+    else:
+        canonical = bottle.canonical_bottle
+
+    return redirect(
+        reverse("canonical_bottle_detail", args=[canonical.id])
+        + "?from=inventory"
+    )

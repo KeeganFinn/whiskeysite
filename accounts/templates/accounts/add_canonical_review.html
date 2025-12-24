@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Review {{ canonical.name }}{% endblock %}
+
+{% block content %}
+<div class="col-lg-6 offset-lg-3 mt-4">
+
+  <h4 class="fw-bold mb-3">Review: {{ canonical.name }}</h4>
+
+  <form method="POST">
+    {% csrf_token %}
+
+    <input type="hidden" name="source" value="{{ source }}">
+
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Nose (0–10)</label>
+        <input type="number" name="nose" min="0" max="10"
+               class="form-control" required>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Taste (0–10)</label>
+        <input type="number" name="taste" min="0" max="10"
+               class="form-control" required>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Finish (0–10)</label>
+        <input type="number" name="finish" min="0" max="10"
+               class="form-control" required>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">Value (0–10)</label>
+        <input type="number" name="value" min="0" max="10"
+               class="form-control" required>
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <label class="form-label">Notes</label>
+      <textarea name="notes"
+                class="form-control"
+                rows="4"
+                maxlength="1000"
+                placeholder="Optional tasting notes (max 1000 characters)"></textarea>
+      <small class="text-muted">Max 1000 characters.</small>
+    </div>
+
+    <div class="mt-4 d-flex gap-2">
+      <button type="submit" class="btn btn-whiskey w-100">
+        Submit Review
+      </button>
+
+      <a href="{% url 'canonical_bottle_detail' canonical.id %}"
+         class="btn btn-outline-secondary w-100">
+        Cancel
+      </a>
+    </div>
+
+  </form>
+
+</div>
+{% endblock %}

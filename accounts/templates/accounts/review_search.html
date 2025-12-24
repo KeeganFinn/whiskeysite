@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Review Bottles{% endblock %}
+
+{% block content %}
+<div class="col-lg-8 offset-lg-2 mt-4">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h3 class="fw-bold mb-0">Review Bottles</h3>
+
+  </div>
+
+  <form method="get" class="input-group mb-2">
+    <span class="input-group-text"><i class="bi bi-search"></i></span>
+    <input type="text"
+           name="q"
+           class="form-control"
+           placeholder="Search bottles or distilleries..."
+           value="{{ q|default:'' }}">
+    <button class="btn btn-whiskey" type="submit">Search</button>
+  </form>
+
+  <div class="text-muted small mb-3" style="min-height: 18px;">
+    {% if q %}
+      Showing results for “{{ q }}”
+    {% endif %}
+  </div>
+
+  {% if bottles %}
+    <div class="list-group shadow-sm">
+      {% for b in bottles %}
+        <a href="{% url 'canonical_bottle_detail' b.id %}?from=review_search"
+           class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+
+          <div>
+            <div class="fw-bold">{{ b.name }}</div>
+            <div class="text-muted small">
+              {% if b.distillery %}{{ b.distillery.name }} • {% endif %}
+              {{ b.get_whiskey_type_display }}
+              {% if b.age %} • {{ b.age }}y{% endif %}
+              {% if b.proof %} • {{ b.proof }} proof{% endif %}
+              {% if b.is_store_pick and b.store_name %} • Store Pick: {{ b.store_name }}{% endif %}
+            </div>
+          </div>
+
+          <div class="text-end">
+            <div class="fw-bold">
+              {{ b.avg_score|default:0|floatformat:1 }}
+            </div>
+            <div class="text-muted small">
+              {{ b.review_count }} review{{ b.review_count|pluralize }}
+            </div>
+          </div>
+
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    {% if q %}
+      <div class="card shadow-sm p-3">
+        <div class="fw-bold mb-1">No bottles found.</div>
+        <div class="text-muted small mb-2">
+          If this bottle doesn’t exist yet, we’ll add an “Add bottle” option next (Step 4.2).
+        </div>
+      </div>
+    {% else %}
+      <p class="text-muted">Search for a bottle to start reviewing.</p>
+    {% endif %}
+  {% endif %}
+
+</div>
+{% endblock %}

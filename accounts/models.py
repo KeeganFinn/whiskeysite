@@ -4,6 +4,23 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.conf import settings
+
+WHISKEY_TYPES = [
+    ("bourbon", "Bourbon"),
+    ("rye", "Rye"),
+    ("single_malt", "Single Malt"),
+    ("blended", "Blended Whiskey"),
+    ("scotch_single_malt", "Scotch – Single Malt"),
+    ("scotch_blended", "Scotch – Blended"),
+    ("irish", "Irish"),
+    ("japanese", "Japanese"),
+    ("canadian", "Canadian"),
+    ("corn", "Corn"),
+    ("wheat", "Wheat Whiskey"),
+    ("american_single_malt", "American Single Malt"),
+    ("other", "Other"),
+]
 
 def user_profile_upload_path(instance, filename):
     return f"profile_pics/user_{instance.user.id}/{filename}"
@@ -140,22 +157,6 @@ class Bottle(models.Model):
         ("finished", "Finished"),
     ]
 
-    WHISKEY_TYPES = [
-        ("bourbon", "Bourbon"),
-        ("rye", "Rye"),
-        ("single_malt", "Single Malt"),
-        ("blended", "Blended Whiskey"),
-        ("scotch_single_malt", "Scotch – Single Malt"),
-        ("scotch_blended", "Scotch – Blended"),
-        ("irish", "Irish"),
-        ("japanese", "Japanese"),
-        ("canadian", "Canadian"),
-        ("corn", "Corn"),
-        ("wheat", "Wheat Whiskey"),
-        ("american_single_malt", "American Single Malt"),
-        ("other", "Other"),
-    ]
-
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bottles")
 
     name = models.CharField(max_length=255)
@@ -182,6 +183,14 @@ class Bottle(models.Model):
         default="unopened"
     )
 
+    canonical_bottle = models.ForeignKey(
+        "CanonicalBottle",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="inventory_bottles",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -189,7 +198,7 @@ class Bottle(models.Model):
 
 class BottleReview(models.Model):
     bottle = models.ForeignKey(
-        Bottle,
+        "CanonicalBottle",
         on_delete=models.CASCADE,
         related_name="reviews"
     )
@@ -221,7 +230,6 @@ class BottleReview(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ("bottle", "reviewer")
         ordering = ["-created_at"]
 
     def save(self, *args, **kwargs):
@@ -271,3 +279,73 @@ class DistilleryAuditLog(models.Model):
 
     def __str__(self):
         return f"{self.distillery} - {self.action}"
+
+class CanonicalBottle(models.Model):
+    name = models.CharField(max_length=255)
+
+    distillery = models.ForeignKey(
+        Distillery,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="canonical_bottles",
+    )
+
+    whiskey_type = models.CharField(
+        max_length=50,
+        choices=WHISKEY_TYPES,
+    )
+
+    age = models.IntegerField(null=True, blank=True)
+    proof = models.FloatField(null=True, blank=True)
+
+    # Store Pick
+    is_store_pick = models.BooleanField(default=False)
+
+    store_name = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Only set if this is a store pick",
+    )
+
+    # Who created this canonical bottle
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_canonical_bottles",
+    )
+
+    # Future-proofing / deduping
+    duplicate_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="duplicates",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["name"]),
+            models.Index(fields=["whiskey_type"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "name",
+                    "distillery",
+                    "whiskey_type",
+                    "is_store_pick",
+                    "store_name",
+                ],
+                name="unique_canonical_bottle_identity",
+            )
+        ]
+
+    def __str__(self):
+        return self.name
