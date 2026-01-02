@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Confirm Bottle Change{% endblock %}
+
+{% block content %}
+<div class="col-lg-6 offset-lg-3 mt-4">
+
+  <div class="alert alert-warning">
+    <strong>Warning:</strong> You are changing the identity of this bottle.
+    Reviews and ratings will remain linked to the original bottle.
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h6 class="fw-bold">Current Linked Bottle (holds reviews)</h6>
+      <p class="mb-1">
+        {{ canonical.name }}
+        {% if canonical.distillery %}• {{ canonical.distillery.name }}{% endif %}
+      </p>
+      <small class="text-muted">
+        {{ canonical.reviews.count }} reviews
+      </small>
+    </div>
+  </div>
+
+  {% if existing %}
+  <div class="card mb-3 border-success">
+    <div class="card-body">
+      <h6 class="fw-bold">Existing Matching Canonical</h6>
+      <p class="mb-1">
+        {{ existing.name }}
+        {% if existing.distillery %}• {{ existing.distillery.name }}{% endif %}
+      </p>
+      <small class="text-muted">
+        {{ existing.review_count }} reviews
+      </small>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert alert-info">
+    A new system bottle will be created.
+  </div>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+    {% for k, v in incoming.items %}
+      <input type="hidden" name="{{ k }}" value="{{ v }}">
+    {% endfor %}
+    <input type="hidden" name="confirm_identity_change" value="1">
+
+    <button class="btn btn-whiskey w-100">
+      Confirm Change
+    </button>
+  </form>
+
+</div>
+{% endblock %}

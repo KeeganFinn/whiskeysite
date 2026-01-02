@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+{% block title %}Edit Event Bottle{% endblock %}
+
+{% block content %}
+<div class="col-lg-6 offset-lg-3 mt-4">
+
+  <h4 class="fw-bold mb-3">Edit Bottle for Event</h4>
+
+  <form method="post">
+    {% csrf_token %}
+
+    <div class="mb-2">
+      <label class="form-label">Bottle Name</label>
+      <input class="form-control" name="name"
+             value="{{ canonical.name }}" required>
+    </div>
+
+    <div class="mb-3 position-relative">
+      <label class="form-label">Distillery</label>
+
+      <input type="text"
+             id="distilleryInput"
+             name="distillery_name"
+             class="form-control"
+             autocomplete="off"
+             placeholder="e.g. Buffalo Trace, Ardbeg, Redbreast"
+             value="{{ canonical.distillery.name|default:'' }}">
+
+      <div id="distillerySuggestions"
+           class="list-group position-absolute w-100 shadow-sm"
+           style="z-index:1050; display:none;"></div>
+
+      <div class="form-text">
+        Start typing a distillery name. If we don’t recognize it, you can add it.
+      </div>
+    </div>
+
+    <div class="mb-2">
+      <label class="form-label">Whiskey Type</label>
+        <select name="whiskey_type" class="form-select" required>
+          {% for value, label in WHISKEY_TYPES %}
+            <option value="{{ value }}"
+              {% if canonical.whiskey_type == value %}selected{% endif %}>
+              {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+    </div>
+
+    <div class="row g-2">
+      <div class="col">
+        <label class="form-label">Age</label>
+        <input type="number" class="form-control"
+               name="age" value="{{ canonical.age }}">
+      </div>
+
+      <div class="col">
+        <label class="form-label">Proof *</label>
+        <input type="number" step="0.1" class="form-control"
+               name="proof" value="{{ canonical.proof }}" required>
+      </div>
+    </div>
+
+    <div class="form-check mt-2">
+      <input class="form-check-input" type="checkbox"
+             name="is_store_pick"
+             {% if canonical.is_store_pick %}checked{% endif %}>
+      <label class="form-check-label">Store Pick</label>
+    </div>
+
+    <div class="mt-2">
+      <input class="form-control" name="store_name"
+             value="{{ canonical.store_name }}"
+             placeholder="Store name">
+    </div>
+
+    <div class="mt-4 d-flex gap-2">
+      <button class="btn btn-whiskey w-100">Save</button>
+      <a href="{% url 'event_detail' event.id %}"
+         class="btn btn-outline-secondary w-100"
+         onclick="clearEventEditCache()">
+        Cancel
+      </a>
+    </div>
+
+  </form>
+</div>
+
+<div class="modal fade" id="addDistilleryModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content rounded-4">
+
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold">Add New Distillery</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <form method="POST" action="{% url 'add_distillery' %}">
+        {% csrf_token %}
+
+          <input type="hidden" name="return_to" id="returnToField">
+
+        <div class="modal-body">
+
+          <div class="mb-3">
+            <label class="form-label">Distillery Name</label>
+            <input type="text"
+                   id="newDistilleryName"
+                   name="name"
+                   class="form-control"
+                   required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Country</label>
+            <input type="text" name="country" class="form-control">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Region</label>
+            <input type="text" name="region" class="form-control">
+          </div>
+
+            <div class="mb-3">
+              <label class="form-label">Climate</label>
+              <select id="event_distillery_climate" name="climate" class="form-select">
+                <option value="">Select climate (optional)</option>
+                {% for value, label in CLIMATE_CHOICES %}
+                  <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+
+              <small id="climateHint" class="text-muted" style="display:none;">
+                Climate suggested based on country and region.
+              </small>
+            </div>
+
+          <div class="alert alert-info small mb-0">
+            This distillery will be <strong>pending approval</strong>.
+          </div>
+
+        </div>
+
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-whiskey w-100">
+            Submit for Approval
+          </button>
+        </div>
+
+        <input type="hidden" name="confirm_identity_change" value="0">
+
+      </form>
+    </div>
+  </div>
+</div>
+
+
+
+
+<script>
+async function suggestClimate(countryInput, regionInput, climateSelect) {
+    if (!countryInput || !regionInput || !climateSelect) return;
+
+    const country = countryInput.value.trim();
+    const region = regionInput.value.trim();
+
+    if (!country || !region) return;
+
+
+    climateSelect.dataset.userSet = "false";
+
+    try {
+        const res = await fetch(
+            `/distilleries/suggest-climate/?country=${encodeURIComponent(country)}&region=${encodeURIComponent(region)}`
+        );
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (!data.climate) return;
+
+        climateSelect.value = data.climate;
+
+        // ✅ THIS IS 1C
+        const hint = document.getElementById("climateHint");
+        if (hint) hint.style.display = "block";
+
+    } catch (err) {
+        console.warn("Climate suggestion failed", err);
+    }
+}
+
+document.addEventListener("shown.bs.modal", function (e) {
+    if (e.target.id !== "addDistilleryModal") return;
+
+    const modal = e.target;
+
+    const countryInput = modal.querySelector('input[name="country"]');
+    const regionInput  = modal.querySelector('input[name="region"]');
+    const climateSelect = modal.querySelector('#event_distillery_climate');
+
+    if (!countryInput || !regionInput || !climateSelect) return;
+
+    // Prevent double binding
+    if (climateSelect.dataset.bound === "true") return;
+    climateSelect.dataset.bound = "true";
+
+    climateSelect.dataset.userSet = "false";
+
+    climateSelect.addEventListener("change", () => {
+        climateSelect.dataset.userSet = "true";
+    });
+
+    countryInput.addEventListener("input", () =>
+        suggestClimate(countryInput, regionInput, climateSelect)
+    );
+
+    regionInput.addEventListener("input", () =>
+        suggestClimate(countryInput, regionInput, climateSelect)
+    );
+});
+
+function openAddDistilleryModal(name) {
+    document.getElementById("newDistilleryName").value = name;
+    document.getElementById("returnToField").value = window.location.href;
+    new bootstrap.Modal(
+        document.getElementById("addDistilleryModal")
+    ).show();
+}
+
+function cacheBottleForm() {
+    const form = document.querySelector("form"); // edit page has only one form
+    if (!form) return;
+
+    const data = {};
+    new FormData(form).forEach((v, k) => {
+        data[k] = v;
+    });
+
+    sessionStorage.setItem("pendingEventBottleForm", JSON.stringify(data));
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+
+    const input = document.getElementById("distilleryInput");
+    const suggestions = document.getElementById("distillerySuggestions");
+    const cached = sessionStorage.getItem("pendingEventBottleForm");
+
+    // Restore form after adding distillery
+    if (cached) {
+        const data = JSON.parse(cached);
+
+        Object.entries(data).forEach(([name, value]) => {
+            const field = document.querySelector(`[name="${name}"]`);
+            if (!field) return;
+
+            if (field.type === "checkbox") {
+                field.checked = value === true || value === "on";
+            } else {
+                field.value = value;
+            }
+        });
+
+        sessionStorage.removeItem("pendingEventBottleForm");
+    }
+
+    if (!input || !suggestions) return;
+
+    input.addEventListener("input", async () => {
+        const q = input.value.trim();
+
+        if (q.length < 2) {
+            suggestions.style.display = "none";
+            return;
+        }
+
+        const res = await fetch(
+            `/distilleries/autocomplete/?q=${encodeURIComponent(q)}`
+        );
+        const data = await res.json();
+
+        suggestions.innerHTML = "";
+
+        if (data.length === 0) {
+            const add = document.createElement("button");
+            add.type = "button";
+            add.className =
+                "list-group-item list-group-item-action text-primary";
+            add.textContent = `Add "${q}"`;
+            add.onclick = () => {
+                cacheBottleForm();
+                openAddDistilleryModal(q);
+            };
+            suggestions.appendChild(add);
+        } else {
+            data.forEach(d => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className =
+                    "list-group-item list-group-item-action";
+                btn.textContent =
+                    d.name + (d.is_verified ? "" : " (pending)");
+                btn.onclick = () => {
+                    input.value = d.name;
+                    suggestions.style.display = "none";
+                };
+                suggestions.appendChild(btn);
+            });
+        }
+
+        suggestions.style.display = "block";
+    });
+
+    document.addEventListener("click", e => {
+        if (!suggestions.contains(e.target) && e.target !== input) {
+            suggestions.style.display = "none";
+        }
+    });
+});
+
+function clearEventEditCache() {
+    sessionStorage.removeItem("pendingEventBottleForm");
+}
+
+window.addEventListener("beforeunload", () => {
+    sessionStorage.removeItem("pendingEventBottleForm");
+});
+
+</script>
+
+{% endblock %}

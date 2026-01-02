@@ -5,20 +5,101 @@
 <div class="col-md-6 offset-md-3">
     <div class="card shadow-lg border-0 rounded-4">
         <div class="card-body p-4">
-            <h3 class="text-center mb-4 fw-bold">Welcome to the Whiskey Tracker</h3>
+
+            <h3 class="text-center mb-4 fw-bold">
+                Welcome to the Whiskey Tracker
+            </h3>
 
             <p class="lead text-center">
                 Track bottles, reviews, and tasting events — all in one place.
             </p>
 
             {% if user.is_authenticated %}
-                <p class="text-center fw-bold mt-3">Hello, {{ user.username }}!</p>
+                <p class="text-center fw-bold mt-3">
+                    Hello, {{ user.username }}!
+                </p>
             {% else %}
                 <div class="text-center mt-4">
                     <a href="/login/" class="btn btn-whiskey me-2">Login</a>
                     <a href="/register/" class="btn btn-whiskey">Register</a>
                 </div>
             {% endif %}
+
+            <!-- 🔔 Notifications -->
+            {% if notifications %}
+                <div class="list-group mt-4">
+                    {% for n in notifications %}
+                        <a href="{% url 'notification_redirect' n.id %}"
+                           class="text-decoration-none text-dark">
+
+                            <div class="border rounded p-3 mb-2
+                                        {% if not n.is_read %}bg-light{% endif %}">
+                                <div>{{ n.message }}</div>
+                                <div class="text-muted small">
+                                    {{ n.created_at|date:"M j, g:i A" }}
+                                </div>
+                            </div>
+
+                        </a>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <!-- 📅 Active / Upcoming Events -->
+            {% if active_events or upcoming_events %}
+                <hr class="my-4">
+
+                <h5 class="fw-bold mb-3">
+                    Your Events
+                </h5>
+
+                <!-- ACTIVE EVENTS -->
+                {% for e in active_events %}
+                    <a href="{% url 'event_detail' e.id %}"
+                       class="text-decoration-none text-dark">
+
+                        <div class="card shadow-sm mb-2">
+                            <div class="card-body py-3">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <div class="fw-bold">{{ e.name }}</div>
+                                        <div class="text-muted small">
+                                            Ends {{ e.end_time|date:"M j, g:i A" }}
+                                        </div>
+                                    </div>
+
+                                    <span class="badge bg-success">Active</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </a>
+                {% endfor %}
+
+                <!-- UPCOMING EVENTS -->
+                {% for e in upcoming_events %}
+                    <a href="{% url 'event_detail' e.id %}"
+                       class="text-decoration-none text-dark">
+
+                        <div class="card shadow-sm mb-2">
+                            <div class="card-body py-3">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <div class="fw-bold">{{ e.name }}</div>
+                                        <div class="text-muted small">
+                                            Starts {{ e.start_time|date:"M j, g:i A" }}
+                                        </div>
+                                    </div>
+
+                                    <span class="badge bg-info">Upcoming</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </a>
+                {% endfor %}
+            {% endif %}
+
         </div>
     </div>
 </div>

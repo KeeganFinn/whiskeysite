@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ mode|title }} Event{% endblock %}
+
+{% block content %}
+<div class="col-lg-6 offset-lg-3 mt-4">
+
+  <h3 class="fw-bold mb-3">
+    {% if mode == "edit" %}Edit{% else %}Create{% endif %} Event
+  </h3>
+
+  <form method="post">
+    {% csrf_token %}
+
+    <div class="mb-3">
+      <label class="form-label">Event Name</label>
+      <input class="form-control" name="name" required
+             value="{{ event.name|default:'' }}">
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Description</label>
+      <textarea class="form-control" rows="3"
+                name="description">{{ event.description|default:'' }}</textarea>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Location</label>
+      <input class="form-control" name="location"
+             value="{{ event.location|default:'' }}">
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label fw-bold">Visibility</label>
+
+      <select name="visibility" class="form-select">
+        <option value="friends"
+          {% if event.visibility == "friends" or not event %}selected{% endif %}>
+          Friends Only
+        </option>
+        <option value="public"
+          {% if event.visibility == "public" %}selected{% endif %}>
+          Public
+        </option>
+      </select>
+
+      <div class="form-text">
+        Friends-only events are only visible to people you’ve added.
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col">
+        <label class="form-label">Start</label>
+        <input type="datetime-local" class="form-control"
+               name="start_time"
+               value="{{ event.start_time|date:'Y-m-d\\TH:i' }}">
+      </div>
+      <div class="col">
+        <label class="form-label">End</label>
+        <input type="datetime-local" class="form-control"
+               name="end_time"
+               value="{{ event.end_time|date:'Y-m-d\\TH:i' }}">
+      </div>
+    </div>
+
+    <div class="mt-4 d-flex gap-2">
+      <button type="submit" class="btn btn-whiskey flex-fill">
+        Save Event
+      </button>
+
+      <a href="{% url 'events_list' %}"
+         class="btn btn-outline-secondary flex-fill">
+        Cancel
+      </a>
+    </div>
+  </form>
+
+</div>
+{% endblock %}

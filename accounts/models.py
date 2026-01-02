@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.contrib.auth.models import User
 from django.db.models.signals import post_save
@@ -5,6 +6,8 @@ from django.dispatch import receiver
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.conf import settings
+from django.urls import reverse
+from django.db.models.signals import post_delete
 
 WHISKEY_TYPES = [
     ("bourbon", "Bourbon"),
@@ -209,6 +212,23 @@ class BottleReview(models.Model):
         related_name="bottle_reviews"
     )
 
+    # 🔥 NEW (nullable)
+    event = models.ForeignKey(
+        "Event",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="reviews",
+    )
+
+    event_bottle = models.ForeignKey(
+        "EventBottle",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="reviews",
+    )
+
     # 1–10 scores
     nose = models.PositiveSmallIntegerField(
         validators=[MinValueValidator(0), MaxValueValidator(10)]
@@ -231,17 +251,38 @@ class BottleReview(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [
+            # 🔒 One review per user per event bottle
+            models.UniqueConstraint(
+                fields=["reviewer", "event_bottle"],
+                name="one_review_per_user_per_event_bottle",
+                condition=models.Q(event_bottle__isnull=False),
+            )
+        ]
+
+    def clean(self):
+        if self.event_bottle and self.event:
+            if self.event_bottle.event_id != self.event_id:
+                raise ValidationError("Event and EventBottle mismatch.")
+
+        if self.event_bottle and not self.event:
+            self.event = self.event_bottle.event
 
     def save(self, *args, **kwargs):
+        if self.event_bottle and not self.event:
+            self.event = self.event_bottle.event
+
         self.final_score = (
-            self.nose * 2.5 +
-            self.taste * 4.0 +
-            self.finish * 2.0 +
-            self.value * 1.5
+                self.nose * 2.5 +
+                self.taste * 4.0 +
+                self.finish * 2.0 +
+                self.value * 1.5
         )
         super().save(*args, **kwargs)
 
     def __str__(self):
+        if self.event:
+            return f"{self.bottle} – {self.final_score:.1f} (Event)"
         return f"{self.bottle} – {self.final_score:.1f}"
 
 class DistilleryAuditLog(models.Model):
@@ -309,6 +350,16 @@ class CanonicalBottle(models.Model):
         help_text="Only set if this is a store pick",
     )
 
+    # 🔀 NEW: Fork lineage (identity change tracking)
+    forked_from = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="forks",
+        help_text="Original canonical bottle this was forked from",
+    )
+
     # Who created this canonical bottle
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -318,7 +369,7 @@ class CanonicalBottle(models.Model):
         related_name="created_canonical_bottles",
     )
 
-    # Future-proofing / deduping
+    # Future-proofing / deduping (admin-reviewed duplicates)
     duplicate_of = models.ForeignKey(
         "self",
         null=True,
@@ -349,3 +400,168 @@ class CanonicalBottle(models.Model):
 
     def __str__(self):
         return self.name
+
+class Event(models.Model):
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="owned_events",
+    )
+
+    name = models.CharField(max_length=255)
+
+    description = models.TextField(
+        blank=True,
+        help_text="Optional event details, tasting notes, rules, etc.",
+    )
+
+    location = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Hidden from non-attendees after event ends",
+    )
+
+    VISIBILITY_CHOICES = [
+        ("friends", "Friends Only"),
+        ("public", "Public"),
+    ]
+
+    visibility = models.CharField(
+        max_length=20,
+        choices=VISIBILITY_CHOICES,
+        default="friends",
+    )
+
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-start_time"]
+
+    def __str__(self):
+        return self.name
+
+    # -----------------------
+    # EVENT STATE HELPERS
+    # -----------------------
+
+    @property
+    def is_active(self):
+        now = timezone.now()
+        return self.start_time <= now <= self.end_time
+
+    @property
+    def is_past(self):
+        return timezone.now() > self.end_time
+
+    @property
+    def is_future(self):
+        return timezone.now() < self.start_time
+
+class EventParticipant(models.Model):
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.CASCADE,
+        related_name="participants",
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="event_participations",
+    )
+
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("event", "user")
+        ordering = ["added_at"]
+
+    def __str__(self):
+        return f"{self.user} → {self.event}"
+
+class EventBottle(models.Model):
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.CASCADE,
+        related_name="event_bottles",
+    )
+
+    canonical_bottle = models.ForeignKey(
+        CanonicalBottle,
+        on_delete=models.CASCADE,
+        related_name="event_entries",
+    )
+
+    added_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="added_event_bottles",
+    )
+
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("event", "canonical_bottle")
+        ordering = ["added_at"]
+
+    def __str__(self):
+        return f"{self.canonical_bottle} @ {self.event}"
+
+class Notification(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications"
+    )
+
+    message = models.CharField(max_length=255)
+    link = models.CharField(max_length=255)
+
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "link"],
+                name="unique_notification_per_user_link"
+            )
+        ]
+
+    def __str__(self):
+        return f"Notification for {self.user} → {self.message}"
+
+@receiver(post_save, sender=EventParticipant)
+def notify_event_invite(sender, instance, created, **kwargs):
+    if not created:
+        return
+
+    event = instance.event
+    user = instance.user
+
+    if event.owner_id == user.id:
+        return
+
+    link = reverse("event_detail", args=[event.id])
+
+    Notification.objects.get_or_create(
+        user=user,
+        link=link,
+        defaults={
+            "message": f"You were invited to the event '{event.name}'"
+        }
+    )
+
+@receiver(post_delete, sender=EventParticipant)
+def cleanup_event_invite_notification(sender, instance, **kwargs):
+    Notification.objects.filter(
+        user=instance.user,
+        link__contains=f"/events/{instance.event_id}/"
+    ).delete()
+

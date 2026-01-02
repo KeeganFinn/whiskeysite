@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Events{% endblock %}
+{% block content %}
+
+<div class="col-lg-8 offset-lg-2 mt-4">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h3 class="fw-bold mb-0">Events</h3>
+
+    <a href="{% url 'event_create' %}" class="btn btn-whiskey btn-sm">
+      <i class="bi bi-plus-circle"></i> Create Event
+    </a>
+  </div>
+
+  <!-- SEARCH -->
+  <form method="get" class="mb-3">
+    <div class="input-group">
+      <span class="input-group-text">
+        <i class="bi bi-search"></i>
+      </span>
+      <input
+        type="text"
+        class="form-control"
+        name="q"
+        value="{{ q }}"
+        placeholder="Search events..."
+      >
+    </div>
+  </form>
+
+  <!-- ACTIVE / UPCOMING -->
+  <h5 class="fw-bold mb-2">Active / Upcoming</h5>
+
+  {% if active_events or upcoming_events %}
+
+    {% for e in active_events %}
+      <a href="{% url 'event_detail' e.id %}" class="text-decoration-none text-dark">
+        <div class="card shadow-sm mb-3">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h5 class="fw-bold mb-1">{{ e.name }}</h5>
+                <div class="text-muted small">
+                  {{ e.start_time|date:"M j, Y g:i A" }} →
+                  {{ e.end_time|date:"M j, Y g:i A" }}
+                </div>
+              </div>
+
+              <span class="badge bg-success">Active</span>
+            </div>
+
+            {% if e.description %}
+              <div class="text-muted small mt-2">
+                {{ e.description|truncatechars:160 }}
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </a>
+    {% endfor %}
+
+    {% for e in upcoming_events %}
+      <a href="{% url 'event_detail' e.id %}" class="text-decoration-none text-dark">
+        <div class="card shadow-sm mb-3">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h5 class="fw-bold mb-1">{{ e.name }}</h5>
+                <div class="text-muted small">
+                  {{ e.start_time|date:"M j, Y g:i A" }} →
+                  {{ e.end_time|date:"M j, Y g:i A" }}
+                </div>
+              </div>
+
+              <span class="badge bg-info">Upcoming</span>
+            </div>
+
+            {% if e.description %}
+              <div class="text-muted small mt-2">
+                {{ e.description|truncatechars:160 }}
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </a>
+    {% endfor %}
+
+  {% else %}
+    <p class="text-muted">No active or upcoming events available to you right now.</p>
+  {% endif %}
+
+  <hr class="my-4">
+
+  <!-- PAST -->
+  <h5 class="fw-bold mb-2">Past Events</h5>
+
+  {% if past_events %}
+    {% for e in past_events %}
+      <a href="{% url 'event_detail' e.id %}" class="text-decoration-none text-dark">
+        <div class="card shadow-sm mb-3">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h5 class="fw-bold mb-1">{{ e.name }}</h5>
+                <div class="text-muted small">
+                  {{ e.start_time|date:"M j, Y g:i A" }} →
+                  {{ e.end_time|date:"M j, Y g:i A" }}
+                </div>
+              </div>
+
+              <span class="badge bg-secondary">Past</span>
+            </div>
+
+            {% if e.description %}
+              <div class="text-muted small mt-2">
+                {{ e.description|truncatechars:160 }}
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </a>
+    {% endfor %}
+  {% else %}
+    <p class="text-muted">No past events yet.</p>
+  {% endif %}
+
+</div>
+
+{% endblock %}

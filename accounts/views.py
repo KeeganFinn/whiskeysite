@@ -2,12 +2,15 @@ from django.shortcuts import render, redirect
 from django.contrib.auth import login, authenticate, logout
 from django.contrib.auth.forms import UserCreationForm, AuthenticationForm
 from django.urls import reverse
+from datetime import datetime
+
+from django.views.decorators.http import require_GET
 
 from .forms import CustomUserCreationForm, CustomPasswordChangeForm, BottleReviewForm
 from django.contrib.auth import update_session_auth_hash
 from django.contrib import messages
 from .forms import ProfileUpdateForm
-from .models import UsernameHistory, DistilleryAuditLog, BottleReview, CanonicalBottle
+from .models import UsernameHistory, DistilleryAuditLog, BottleReview, CanonicalBottle, EventParticipant, EventBottle
 from django.utils import timezone
 from datetime import timedelta
 from .forms import ChangeUsernameForm
@@ -18,17 +21,35 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth.models import User
 from .models import Follow
 from .forms import BottleForm
-from .models import Bottle, Distillery
+from .models import Bottle, Distillery, Event
 from django import forms as djforms
-from django.db.models import Count, Avg, Sum, Q
+from django.db.models import Count, Avg, Sum, Q, When, IntegerField, Case
 from django.shortcuts import  redirect
 from django.db.models import F
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseForbidden
 from .climate_lookup import suggest_climate, CLIMATE_CHOICES
 import csv
 from django.http import HttpResponse
-from django.core.paginator import Paginator
+from django.db import models
+from .models import WHISKEY_TYPES
+from .canonical import (
+    canonical_identity_changed,
+    fork_canonical, resolve_canonical,
+)
 
+
+
+def normalize_int(value):
+    if value in (None, "", "None"):
+        return None
+    return int(value)
+
+def parse_local_datetime(value):
+    """
+    Convert browser datetime-local input to UTC safely.
+    """
+    naive = datetime.strptime(value, "%Y-%m-%dT%H:%M")
+    return timezone.make_aware(naive, timezone.get_default_timezone())
 
 def register_view(request):
     if request.method == 'POST':
@@ -62,8 +83,34 @@ def logout_view(request):
     logout(request)
     return redirect('/')
 
+from .models import Notification
+
+from django.utils import timezone
+
+@login_required
 def home_view(request):
-    return render(request, 'accounts/home.html')
+    notifications = request.user.notifications.filter(is_read=False)
+
+    active_events = (
+        Event.objects
+        .filter(
+            Q(owner=request.user) |
+            Q(participants__user=request.user),
+            end_time__gte=timezone.now(),  # active OR upcoming
+        )
+        .distinct()
+        .order_by("start_time")
+    )
+
+    return render(
+        request,
+        "accounts/home.html",
+        {
+            "notifications": notifications,
+            "active_events": active_events,
+        },
+    )
+
 
 def add_bootstrap_classes(form):
     for name, field in form.fields.items():
@@ -502,6 +549,8 @@ def inventory_view(request):
                 "nas_count": nas_count,
                 "common_type": common_type,
             },
+
+            "CLIMATE_CHOICES": CLIMATE_CHOICES,
         },
     )
 
@@ -599,82 +648,197 @@ def inventory_export(request):
 def add_bottle_view(request):
     if request.method == "POST":
         form = BottleForm(request.POST)
-        if form.is_valid():
-            bottle = form.save(commit=False)
-            bottle.user = request.user
-
-            # ---- Distillery handling ----
-            dist_name = form.cleaned_data.get("distillery_name", "").strip()
-            dist_instance = None
-            is_new_distillery = False
-
-            if dist_name:
-                # Try case-insensitive match
-                dist_instance = Distillery.objects.filter(
-                    name__iexact=dist_name
-                ).first()
-
-                # If not found, create a new one
-                if not dist_instance:
-                    dist_instance = Distillery.objects.create(
-                        name=dist_name,
-                        added_by=request.user,
-                        is_verified=False,
-                    )
-                    is_new_distillery = True
-
-            bottle.distillery = dist_instance
-            bottle.save()
-
-            # Optional: remember that we just created a new distillery
-            if is_new_distillery:
-                request.session["new_distillery_id"] = dist_instance.id
-
-            messages.success(request, "Bottle added to your inventory!")
-        else:
+        if not form.is_valid():
             messages.error(request, "Please fix the errors in the form.")
+            return redirect("inventory")
+
+        bottle = form.save(commit=False)
+        bottle.user = request.user
+
+        # -----------------------------
+        # Distillery handling (name-based)
+        # -----------------------------
+        dist_name = (form.cleaned_data.get("distillery_name") or "").strip()
+        distillery = None
+
+        if dist_name:
+            distillery = Distillery.objects.filter(
+                name__iexact=dist_name
+            ).first()
+
+            if not distillery:
+                distillery = Distillery.objects.create(
+                    name=dist_name,
+                    added_by=request.user,
+                    is_verified=False,
+                )
+
+        bottle.distillery = distillery
+
+        # -----------------------------
+        # Normalize identity fields
+        # -----------------------------
+        age = bottle.age if bottle.age not in ("", 0) else None
+        proof = bottle.proof
+
+        # -----------------------------
+        # Canonical identity payload
+        # -----------------------------
+        incoming = {
+            "name": bottle.name.strip(),
+            "distillery": distillery,
+            "whiskey_type": bottle.whiskey_type,
+            "age": age,
+            "proof": proof,
+            "is_store_pick": bottle.is_store_pick,
+            "store_name": bottle.store_name,
+            "forked_from": None,  # inventory add is a root action
+        }
+
+        # -----------------------------
+        # Resolve canonical
+        # -----------------------------
+        canonical, _created = resolve_canonical(incoming, request.user)
+
+        bottle.canonical_bottle = canonical
+        bottle.age = age
+        bottle.proof = proof
+
+        bottle.save()
+
+        messages.success(request, "Bottle added to your inventory!")
 
     return redirect("inventory")
 
 @login_required
 def edit_bottle_view(request, bottle_id):
     bottle = get_object_or_404(Bottle, id=bottle_id, user=request.user)
+    canonical = bottle.canonical_bottle
+
+    def normalize_int(v):
+        return None if v in (None, "", "None") else int(v)
+
+    def normalize_float(v):
+        return None if v in (None, "", "None") else float(v)
 
     if request.method == "POST":
-        form = BottleForm(request.POST, instance=bottle)
-        if form.is_valid():
-            bottle = form.save(commit=False)
-            bottle.user = request.user
 
-            dist_name = form.cleaned_data.get("distillery_name", "").strip()
-            dist_instance = None
+        # =====================================================
+        # 🔁 CONFIRMATION POST (rehydrate manually)
+        # =====================================================
+        if request.POST.get("confirm_identity_change"):
+            name = request.POST.get("name", "").strip()
+            whiskey_type = request.POST.get("whiskey_type")
+            age = normalize_int(request.POST.get("age"))
+            proof = normalize_float(request.POST.get("proof"))
+            is_store_pick = request.POST.get("is_store_pick") == "on"
+            store_name = request.POST.get("store_name") or None
+
+            dist_name = (request.POST.get("distillery_name") or "").strip()
+            distillery = None
 
             if dist_name:
-                dist_instance = Distillery.objects.filter(
-                    name__iexact=dist_name
-                ).first()
-                if not dist_instance:
-                    dist_instance = Distillery.objects.create(
+                distillery = Distillery.objects.filter(name__iexact=dist_name).first()
+                if not distillery:
+                    distillery = Distillery.objects.create(
                         name=dist_name,
                         added_by=request.user,
                         is_verified=False,
                     )
 
-            bottle.distillery = dist_instance
-            bottle.save()
+        # =====================================================
+        # 📝 NORMAL EDIT POST (use form validation)
+        # =====================================================
+        else:
+            form = BottleForm(request.POST, instance=bottle)
+            if not form.is_valid():
+                messages.error(request, "Please fix the errors and try again.")
+                return redirect("inventory")
 
-            messages.success(request, "Bottle updated.")
-            return redirect("inventory")
-    else:
-        initial = {}
-        if bottle.distillery:
-            initial["distillery_name"] = bottle.distillery.name
-        form = BottleForm(instance=bottle, initial=initial)
+            bottle = form.save(commit=False)
+            bottle.user = request.user
 
-    return render(request, "accounts/edit_bottle.html", {
-        "form": form,
-        "bottle": bottle,
-    })
+            name = bottle.name.strip()
+            whiskey_type = bottle.whiskey_type
+            age = normalize_int(bottle.age)
+            proof = normalize_float(bottle.proof)
+            is_store_pick = bottle.is_store_pick
+            store_name = bottle.store_name
+
+            dist_name = (form.cleaned_data.get("distillery_name") or "").strip()
+            distillery = None
+
+            if dist_name:
+                distillery = Distillery.objects.filter(name__iexact=dist_name).first()
+                if not distillery:
+                    distillery = Distillery.objects.create(
+                        name=dist_name,
+                        added_by=request.user,
+                        is_verified=False,
+                    )
+
+        # =====================================================
+        # 🧠 CANONICAL IDENTITY PAYLOAD
+        # =====================================================
+        incoming = {
+            "name": name,
+            "distillery": distillery,
+            "whiskey_type": whiskey_type,
+            "age": age,
+            "proof": proof,
+            "is_store_pick": is_store_pick,
+            "store_name": store_name,
+            "forked_from": canonical,
+        }
+
+        resolved, created = resolve_canonical(incoming, request.user)
+
+        # =====================================================
+        # ⛔ CONFIRMATION REQUIRED
+        # =====================================================
+        if (
+                canonical is not None
+                and resolved.id != canonical.id
+                and not request.POST.get("confirm_identity_change")
+        ):
+            return render(
+                request,
+                "accounts/confirm_identity_change.html",
+                {
+                    "canonical": canonical,
+                    "existing": None if created else resolved,
+                    "incoming": {
+                        "name": name,
+                        "distillery_name": distillery.name if distillery else "",
+                        "whiskey_type": whiskey_type,
+                        "age": age or "",
+                        "proof": proof or "",
+                        "is_store_pick": "on" if is_store_pick else "",
+                        "store_name": store_name or "",
+                    },
+                },
+            )
+
+        # =====================================================
+        # ✅ APPLY TO INVENTORY + CANONICAL
+        # =====================================================
+        if bottle.canonical_bottle is None or bottle.canonical_bottle_id != resolved.id:
+            bottle.canonical_bottle = resolved
+        bottle.name = name
+        bottle.distillery = distillery
+        bottle.whiskey_type = whiskey_type
+        bottle.age = age
+        bottle.proof = proof
+        bottle.is_store_pick = is_store_pick
+        bottle.store_name = store_name
+
+        bottle.save()
+
+        messages.success(request, "Bottle updated.")
+        return redirect("inventory")
+
+    # Inventory edits only come from modal → no GET page
+    return redirect("inventory")
 
 
 @login_required
@@ -690,34 +854,6 @@ def delete_bottle_view(request, bottle_id):
     messages.success(request, "Bottle deleted.")
     return redirect("inventory")
 
-
-
-@login_required
-def add_distillery_view(request):
-    if request.method == "POST":
-        name = request.POST.get("name", "").strip()
-
-        if not name:
-            messages.error(request, "Distillery name is required.")
-            return redirect("inventory")
-
-        dist, created = Distillery.objects.get_or_create(
-            name__iexact=name,
-            defaults={
-                "name": name,
-                "country": request.POST.get("country", ""),
-                "region": request.POST.get("region", ""),
-                "added_by": request.user,
-                "is_verified": False,
-            }
-        )
-
-        messages.success(
-            request,
-            "Distillery submitted for approval. You can still use it immediately."
-        )
-
-    return redirect("inventory")
 
 def infer_climate_view(request):
     country = request.GET.get("country")
@@ -737,32 +873,57 @@ def distillery_autocomplete(request):
 
     results = (
         Distillery.objects
-        .filter(is_verified=True, name__icontains=q)
-        .order_by("name")[:10]
+        .filter(name__icontains=q)
+        .order_by(
+            "-is_verified",  # verified first
+            "name"
+        )[:10]
     )
 
     return JsonResponse(
-        [{"id": d.id, "name": d.name} for d in results],
+        [
+            {
+                "id": d.id,
+                "name": d.name,
+                "is_verified": d.is_verified,
+            }
+            for d in results
+        ],
         safe=False
     )
 
+@login_required
 def add_distillery(request):
     if request.method == "POST":
         name = request.POST.get("name").strip()
-        country = request.POST.get("country")
-        region = request.POST.get("region")
+        country = request.POST.get("country", "")
+        region = request.POST.get("region", "")
+        climate = request.POST.get("climate") or None
 
-        climate = suggest_climate(country, region)
-
-        Distillery.objects.create(
+        distillery, created = Distillery.objects.get_or_create(
             name=name,
-            country=country,
-            region=region,
-            climate=climate,
-            added_by=request.user
+            defaults={
+                "country": country,
+                "region": region,
+                "climate": climate,
+                "added_by": request.user,
+                "is_verified": False,
+            },
         )
 
-    return redirect("inventory")
+        messages.success(
+            request,
+            "Distillery submitted for approval."
+            if created else
+            "Distillery already exists."
+        )
+
+        return_to = request.POST.get("return_to")
+        if return_to:
+            return redirect(return_to)
+
+        return redirect("inventory")
+
 
 @login_required
 @permission_required("accounts.can_review_distillery")
@@ -1063,3 +1224,566 @@ def inventory_to_canonical(request, pk):
         reverse("canonical_bottle_detail", args=[canonical.id])
         + "?from=inventory"
     )
+
+@login_required
+def event_create(request):
+    if request.method == "POST":
+        Event.objects.create(
+            owner=request.user,
+            name=request.POST["name"],
+            description=request.POST.get("description", ""),
+            location=request.POST.get("location", ""),
+            visibility=request.POST.get("visibility", "friends"),
+            start_time=parse_local_datetime(request.POST["start_time"]),
+            end_time=parse_local_datetime(request.POST["end_time"]),
+        )
+
+        messages.success(request, "Event created.")
+        return redirect("events_list")
+
+    return render(request, "accounts/event_form.html", {"mode": "create"})
+
+
+@login_required
+def add_event_review(request, event_id, event_bottle_id):
+    event = get_object_or_404(Event, pk=event_id)
+    event_bottle = get_object_or_404(
+        EventBottle,
+        pk=event_bottle_id,
+        event=event
+    )
+
+    # 🔒 Permission checks
+    if not EventParticipant.objects.filter(event=event, user=request.user).exists():
+        return HttpResponseForbidden("You are not part of this event.")
+
+    if event.is_past():
+        return HttpResponseForbidden("This event is closed.")
+
+    # Existing review (editable until event ends)
+    review = BottleReview.objects.filter(
+        event=event,
+        event_bottle=event_bottle,
+        reviewer=request.user,
+    ).first()
+
+    if request.method == "POST":
+        data = {
+            "nose": int(request.POST["nose"]),
+            "taste": int(request.POST["taste"]),
+            "finish": int(request.POST["finish"]),
+            "value": int(request.POST["value"]),
+            "notes": request.POST.get("notes", "")[:1000],
+        }
+
+        if review:
+            for k, v in data.items():
+                setattr(review, k, v)
+            review.save()
+        else:
+            BottleReview.objects.create(
+                bottle=event_bottle.bottle,
+                reviewer=request.user,
+                event=event,
+                event_bottle=event_bottle,
+                **data,
+            )
+
+        return redirect("event_detail", event.id)
+
+    return render(
+        request,
+        "accounts/add_event_review.html",
+        {
+            "event": event,
+            "event_bottle": event_bottle,
+            "review": review,
+        },
+    )
+
+@login_required
+def events_list(request):
+    now = timezone.now()
+
+    # Events the user can see
+    visible_events = Event.objects.filter(
+        Q(visibility="public") |
+        Q(visibility="friends", participants__user=request.user) |
+        Q(owner=request.user)
+    ).distinct()
+
+    # Split into buckets
+    upcoming_events = visible_events.filter(start_time__gt=now)
+
+    active_events = visible_events.filter(
+        start_time__lte=now,
+        end_time__gte=now,
+    )
+
+    past_events = visible_events.filter(end_time__lt=now)
+
+    return render(
+        request,
+        "accounts/events_list.html",
+        {
+            "upcoming_events": upcoming_events.order_by("start_time"),
+            "active_events": active_events.order_by("end_time"),
+            "past_events": past_events.order_by("-end_time"),
+        },
+    )
+
+@login_required
+def event_detail(request, pk):
+    event = get_object_or_404(Event, pk=pk)
+
+    is_owner = (event.owner_id == request.user.id)
+    is_attendee = is_owner or EventParticipant.objects.filter(event=event, user=request.user).exists()
+
+    # Hide location after event ends from non-attendees
+    show_location = (not event.is_past) or is_attendee
+
+    bottles = (
+        EventBottle.objects
+        .filter(event=event)
+        .select_related("canonical_bottle", "canonical_bottle__distillery", "added_by")
+        .order_by("added_at")
+    )
+
+    participants = (
+        EventParticipant.objects
+        .filter(event=event)
+        .select_related("user")
+        .order_by("added_at")
+    )
+
+    return render(
+        request,
+        "accounts/event_detail.html",
+        {
+            "event": event,
+            "is_owner": is_owner,
+            "is_attendee": is_attendee,
+            "show_location": show_location,
+            "bottles": bottles,
+            "participants": participants,
+            "WHISKEY_TYPES": WHISKEY_TYPES,
+            "CLIMATE_CHOICES": CLIMATE_CHOICES,
+
+        },
+    )
+
+@login_required
+def event_form(request, pk=None):
+    event = None
+    mode = "create"
+
+    if pk:
+        event = get_object_or_404(Event, pk=pk, owner=request.user)
+        mode = "edit"
+
+    if request.method == "POST":
+        if event:
+            obj = event
+        else:
+            obj = Event(owner=request.user)
+
+        obj.name = request.POST["name"]
+        obj.description = request.POST.get("description", "")
+        obj.location = request.POST.get("location", "")
+        obj.start_time = request.POST["start_time"]
+        obj.end_time = request.POST["end_time"]
+        obj.visibility = request.POST.get("visibility", "friends")
+
+        obj.save()
+
+        # ✅ owner automatically becomes participant (only on create)
+        if not event:
+            EventParticipant.objects.get_or_create(
+                event=obj,
+                user=request.user,
+            )
+
+        messages.success(request, "Event saved.")
+        return redirect("event_detail", pk=obj.id)
+
+    return render(
+        request,
+        "accounts/event_form.html",
+        {
+            "event": event,
+            "mode": mode,
+        },
+    )
+
+@login_required
+def event_edit(request, pk):
+    event = get_object_or_404(Event, pk=pk, owner=request.user)
+
+    if request.method == "POST":
+        event.name = request.POST["name"]
+        event.description = request.POST.get("description", "")
+        event.location = request.POST.get("location", "")
+        event.visibility = request.POST.get("visibility", "friends")
+
+        event.start_time = parse_local_datetime(request.POST["start_time"])
+        event.end_time = parse_local_datetime(request.POST["end_time"])
+
+        event.save()
+
+        messages.success(request, "Event updated.")
+        return redirect("event_detail", pk=event.id)
+
+    return render(
+        request,
+        "accounts/event_form.html",
+        {
+            "event": event,
+            "mode": "edit",
+        },
+    )
+
+@login_required
+def event_delete(request, pk):
+    event = get_object_or_404(Event, pk=pk, owner=request.user)
+
+    if request.method == "POST":
+        event.delete()
+        messages.success(request, "Event deleted.")
+        return redirect("events_list")
+
+    return render(
+        request,
+        "accounts/event_confirm_delete.html",
+        {"event": event},
+    )
+
+@login_required
+def event_add_bottle(request, pk):
+    event = get_object_or_404(Event, pk=pk, owner=request.user)
+
+    if event.is_past:
+        messages.error(request, "You can’t add bottles after the event ends.")
+        return redirect("event_detail", pk=pk)
+
+    if request.method == "POST":
+        name = request.POST["name"].strip()
+        whiskey_type = request.POST["whiskey_type"]
+        proof = request.POST.get("proof")
+        age = request.POST.get("age") or None
+        distillery_name = request.POST.get("distillery_name") or None
+        is_store_pick = bool(request.POST.get("is_store_pick"))
+        store_name = request.POST.get("store_name") or None
+
+        if not proof:
+            messages.error(request, "Proof is required.")
+            return redirect("event_detail", pk=pk)
+
+        # ---------------------------
+        # Distillery (name-based)
+        # ---------------------------
+        distillery = None
+        if distillery_name:
+            distillery = Distillery.objects.filter(
+                name__iexact=distillery_name.strip()
+            ).first()
+
+            if not distillery:
+                distillery = Distillery.objects.create(
+                    name=distillery_name.strip(),
+                    added_by=request.user,
+                    is_verified=False,
+                )
+
+        # Normalize values
+        age = int(age) if age not in (None, "", "None") else None
+        proof = float(proof)
+
+        # ---------------------------
+        # Canonical resolution (FIX)
+        # ---------------------------
+        incoming = {
+            "name": name,
+            "distillery": distillery,
+            "whiskey_type": whiskey_type,
+            "age": age,
+            "proof": proof,
+            "is_store_pick": is_store_pick,
+            "store_name": store_name,
+        }
+
+        normalize_store_pick(incoming)
+
+        canonical, _created = resolve_canonical(incoming, request.user)
+
+        # ---------------------------
+        # Event bottle
+        # ---------------------------
+        EventBottle.objects.get_or_create(
+            event=event,
+            canonical_bottle=canonical,
+            defaults={"added_by": request.user},
+        )
+
+        messages.success(request, "Bottle added to event.")
+        return redirect("event_detail", pk=pk)
+
+    return redirect("event_detail", pk=pk)
+
+
+@login_required
+def event_add_participant(request, pk):
+    event = get_object_or_404(Event, pk=pk, owner=request.user)
+
+    if request.method == "POST":
+        username = request.POST.get("username")
+
+        try:
+            user = User.objects.get(username=username)
+            EventParticipant.objects.get_or_create(
+                event=event,
+                user=user,
+            )
+            messages.success(request, f"{user.username} added to event.")
+        except User.DoesNotExist:
+            messages.error(request, "User not found.")
+
+    return redirect("event_detail", pk=event.id)
+
+@login_required
+def event_remove_participant(request, pk, user_id):
+    event = get_object_or_404(Event, pk=pk, owner=request.user)
+
+    EventParticipant.objects.filter(
+        event=event,
+        user_id=user_id,
+    ).delete()
+
+    messages.success(request, "Participant removed.")
+    return redirect("event_detail", pk=event.id)
+
+@login_required
+def event_user_search(request, pk):
+    event = get_object_or_404(Event, pk=pk)
+
+    q = request.GET.get("q", "").strip()
+    if not q:
+        return JsonResponse([], safe=False)
+
+    existing_ids = EventParticipant.objects.filter(
+        event=event
+    ).values_list("user_id", flat=True)
+
+    following_ids = Follow.objects.filter(
+        follower=request.user
+    ).values_list("following_id", flat=True)
+
+    users = (
+        User.objects
+        .exclude(id=request.user.id)
+        .exclude(id__in=existing_ids)
+        .filter(username__icontains=q)
+        .annotate(
+            is_following=models.Case(
+                models.When(id__in=following_ids, then=models.Value(1)),
+                default=models.Value(0),
+                output_field=models.IntegerField(),
+            )
+        )
+        .order_by("-is_following", "username")[:20]
+    )
+
+    return JsonResponse([
+        {
+            "id": u.id,
+            "username": u.username,
+            "is_following": bool(u.is_following),
+        }
+        for u in users
+    ], safe=False)
+
+@login_required
+def notification_redirect(request, pk):
+    notification = get_object_or_404(
+        Notification,
+        pk=pk,
+        user=request.user
+    )
+
+    # Mark as read
+    if not notification.is_read:
+        notification.is_read = True
+        notification.save(update_fields=["is_read"])
+
+    return redirect(notification.link)
+
+@login_required
+def event_add_review(request, event_id, canonical_id):
+    event = get_object_or_404(Event, pk=event_id)
+    bottle = get_object_or_404(CanonicalBottle, pk=canonical_id)
+
+    # Permission checks
+    is_attendee = (
+        event.owner_id == request.user.id or
+        EventParticipant.objects.filter(event=event, user=request.user).exists()
+    )
+
+    if not is_attendee:
+        return HttpResponseForbidden()
+
+    if event.is_past:
+        messages.error(request, "This event is closed for reviews.")
+        return redirect("event_detail", pk=event.id)
+
+    # Prevent duplicate event review
+    existing = BottleReview.objects.filter(
+        reviewer=request.user,
+        bottle=bottle,
+        event=event
+    ).first()
+
+    if request.method == "POST":
+        review = existing or BottleReview(
+            reviewer=request.user,
+            bottle=bottle,
+            event=event,
+        )
+
+        review.nose = int(request.POST["nose"])
+        review.taste = int(request.POST["taste"])
+        review.finish = int(request.POST["finish"])
+        review.value = int(request.POST["value"])
+        review.notes = request.POST.get("notes", "")[:1000]
+
+        review.save()
+
+        return redirect("event_detail", pk=event.id)
+
+    return render(
+        request,
+        "accounts/add_review.html",
+        {
+            "canonical": bottle,
+            "event": event,
+            "review": existing,
+        }
+    )
+
+@login_required
+def event_delete_bottle(request, event_id, pk):
+    event = get_object_or_404(Event, pk=event_id, owner=request.user)
+    bottle = get_object_or_404(EventBottle, pk=pk, event=event)
+
+    if event.is_past:
+        messages.error(request, "Event is closed.")
+        return redirect("event_detail", pk=event_id)
+
+    bottle.delete()
+    messages.success(request, "Bottle removed from event.")
+    return redirect("event_detail", pk=event_id)
+
+@login_required
+def event_edit_bottle(request, event_id, pk):
+    event = get_object_or_404(Event, pk=event_id, owner=request.user)
+    event_bottle = get_object_or_404(EventBottle, pk=pk, event=event)
+    canonical = event_bottle.canonical_bottle
+
+    if event.is_past:
+        messages.error(request, "Event is closed.")
+        return redirect("event_detail", pk=event_id)
+
+    if request.method == "POST":
+
+        def normalize_int(v):
+            return None if v in (None, "", "None") else int(v)
+
+        def normalize_float(v):
+            return None if v in (None, "", "None") else float(v)
+
+        # ---- Incoming values ----
+        name = request.POST["name"].strip()
+        whiskey_type = request.POST["whiskey_type"]
+        proof = normalize_float(request.POST.get("proof"))
+        age = normalize_int(request.POST.get("age"))
+        is_store_pick = bool(request.POST.get("is_store_pick"))
+        store_name = request.POST.get("store_name") or None
+
+        # ---- Distillery (inventory-style) ----
+        distillery = None
+        dist_name = (request.POST.get("distillery_name") or "").strip()
+
+        if dist_name:
+            distillery = Distillery.objects.filter(
+                name__iexact=dist_name
+            ).first()
+
+            if not distillery:
+                distillery = Distillery.objects.create(
+                    name=dist_name,
+                    added_by=request.user,
+                    is_verified=False,
+                )
+
+        incoming = {
+            "name": name,
+            "distillery": distillery,
+            "whiskey_type": whiskey_type,
+            "age": age,
+            "proof": proof,
+            "is_store_pick": is_store_pick,
+            "store_name": store_name,
+            "forked_from": canonical,
+        }
+
+        normalize_store_pick(incoming)
+
+        # ---- Identity check ----
+        resolved, created = resolve_canonical(incoming, request.user)
+
+        if resolved.id != canonical.id:
+            # Identity changed OR reverted → reattach
+            event_bottle.canonical_bottle = resolved
+            event_bottle.save()
+        else:
+            # Same canonical → safe in-place update
+            canonical.name = name
+            canonical.distillery = distillery
+            canonical.whiskey_type = whiskey_type
+            canonical.age = age
+            canonical.proof = proof
+            canonical.is_store_pick = is_store_pick
+            canonical.store_name = store_name
+            canonical.save()
+
+        messages.success(request, "Event bottle updated.")
+        return redirect("event_detail", pk=event_id)
+
+    return render(
+        request,
+        "accounts/event_edit_bottle.html",
+        {
+            "event": event,
+            "event_bottle": event_bottle,
+            "canonical": canonical,
+            "WHISKEY_TYPES": WHISKEY_TYPES,
+            "CLIMATE_CHOICES": CLIMATE_CHOICES,
+        },
+    )
+
+@require_GET
+def suggest_climate_view(request):
+    country = (request.GET.get("country") or "").strip()
+    region = (request.GET.get("region") or "").strip()
+
+    code = suggest_climate(country, region)
+    return JsonResponse({"climate": code})
+
+
+def normalize_store_pick(data: dict):
+    """
+    Canonical rule:
+    - Store pick only matters if is_store_pick == True
+    - Otherwise store_name MUST be None
+    """
+    if not data.get("is_store_pick"):
+        data["is_store_pick"] = False
+        data["store_name"] = None

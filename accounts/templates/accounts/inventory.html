@@ -518,7 +518,11 @@
             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
           </div>
 
-          <form method="POST" action="{% url 'edit_bottle' bottle.id %}">
+          <form method="POST"
+          action="{% url 'edit_bottle' bottle.id %}"
+          id="editBottleForm{{ bottle.id }}"
+          data-bottle-id="{{ bottle.id }}">
+
             {% csrf_token %}
 
             <div class="modal-body">
@@ -532,13 +536,22 @@
                        required>
               </div>
 
-              <div class="mb-3">
-                <label class="form-label">Distillery</label>
-                <input type="text"
-                       name="distillery_name"
-                       class="form-control"
-                       value="{% if bottle.distillery %}{{ bottle.distillery.name }}{% endif %}">
-              </div>
+                <div class="mb-3 position-relative">
+                  <label class="form-label">Distillery</label>
+
+                  <input type="text"
+                         name="distillery_name"
+                         class="form-control edit-distillery-input"
+                         autocomplete="off"
+                         value="{% if bottle.distillery %}{{ bottle.distillery.name }}{% endif %}">
+
+                  <div class="list-group position-absolute w-100 shadow-sm edit-distillery-suggestions"
+                       style="z-index:1050; display:none;"></div>
+
+                  <div class="form-text">
+                    Start typing a distillery name. If we don’t recognize it, you can add it.
+                  </div>
+                </div>
 
               <div class="mb-3">
                 <label class="form-label">Type</label>
@@ -687,7 +700,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
 
-      <form method="POST" action="{% url 'add_bottle' %}">
+      <form method="POST" action="{% url 'add_bottle' %}" id="createBottleForm">
         {% csrf_token %}
 
         <div class="modal-body">
@@ -782,6 +795,8 @@
       <form method="POST" action="{% url 'add_distillery' %}">
         {% csrf_token %}
 
+          <input type="hidden" name="return_to" id="returnToField">
+
         <div class="modal-body">
 
           <div class="mb-3">
@@ -807,15 +822,18 @@
                    class="form-control">
           </div>
 
-          <div class="mb-3">
-            <label class="form-label">Climate</label>
-            <select id="id_climate" name="climate" class="form-select">
+            <div class="mb-3">
+              <label class="form-label">Climate</label>
+              <select id="id_climate"
+                    name="climate"
+                    class="form-select"
+                    data-user-set="false">
                 <option value="">Select climate (optional)</option>
-                {% for value,label in form.climate.field.choices %}
-                    <option value="{{ value }}">{{ label }}</option>
+                {% for value, label in CLIMATE_CHOICES %}
+                  <option value="{{ value }}">{{ label }}</option>
                 {% endfor %}
-            </select>
-          </div>
+              </select>
+            </div>
 
           <div class="alert alert-info small mb-0">
             This distillery will be <strong>pending approval</strong> until reviewed.
@@ -835,15 +853,68 @@
   </div>
 </div>
 
+<div class="modal fade" id="identityChangeWarningModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content rounded-4">
 
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold text-warning">
+          Confirm Bottle Change
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        <p>
+          You’re changing fields that define this bottle’s identity.
+        </p>
+        <p class="mb-0">
+          <strong>What this means:</strong>
+        </p>
+        <ul class="small">
+          <li>A new bottle will be created</li>
+          <li>Existing reviews stay with the original bottle</li>
+        </ul>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">
+          Cancel
+        </button>
+
+        <button class="btn btn-whiskey" id="confirmIdentityChangeBtn">
+          Yes, Continue
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
 
 <script>
 function openAddDistilleryModal(name) {
     document.getElementById("newDistilleryName").value = name;
+    document.getElementById("returnToField").value = window.location.href;
     new bootstrap.Modal(document.getElementById("addDistilleryModal")).show();
 }
 
+/* 🔒 ONLY called when user explicitly chooses "Add distillery" */
+function cacheBottleForm(formId) {
+    const form = document.getElementById(formId);
+    if (!form) return;
+
+    const data = {};
+    new FormData(form).forEach((v, k) => {
+        data[k] = v;
+    });
+
+    sessionStorage.setItem("pendingBottleForm", JSON.stringify(data));
+    sessionStorage.setItem("reopenBottleModal", "true");
+}
+
 document.addEventListener("DOMContentLoaded", function () {
+
+    /* ---------------- VIEW TOGGLING (unchanged) ---------------- */
 
     const views = {
         cards: document.getElementById("cardView"),
@@ -863,12 +934,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const existingSearch = params.get("q");
     let activeView = "cards";
 
-        if (existingSearch && searchInput) {
-            searchInput.value = existingSearch;
-        }
+    if (existingSearch && searchInput) {
+        searchInput.value = existingSearch;
+    }
 
-        function switchView(mode) {
-            activeView = mode;
+    function switchView(mode) {
+        activeView = mode;
 
         if (searchInput && searchInput.value.trim()) {
             applySearch();
@@ -885,7 +956,45 @@ document.addEventListener("DOMContentLoaded", function () {
         });
 
         localStorage.setItem("inventory_view", mode);
+    }
 
+    /* ---------------- RESTORE CACHED FORM (ONLY IF EXISTS) ---------------- */
+
+    const cached = sessionStorage.getItem("pendingBottleForm");
+
+    if (cached) {
+        const data = JSON.parse(cached);
+
+        Object.entries(data).forEach(([name, value]) => {
+            const field = document.querySelector(`#createBottleForm [name="${name}"]`);
+            if (!field) return;
+
+            if (field.type === "checkbox") {
+                field.checked = value === true || value === "on";
+            } else {
+                field.value = value;
+            }
+        });
+
+        sessionStorage.removeItem("pendingBottleForm");
+    }
+
+    /* 🔁 Reopen modal ONLY if explicitly requested */
+    if (sessionStorage.getItem("reopenBottleModal") === "true") {
+        const modalEl = document.getElementById("createBottleModal");
+        if (modalEl) {
+            new bootstrap.Modal(modalEl).show();
+        }
+        sessionStorage.removeItem("reopenBottleModal");
+    }
+
+    /* 🔥 CLEAR CACHE ON SUCCESSFUL BOTTLE SUBMIT */
+    const bottleForm = document.getElementById("createBottleForm");
+    if (bottleForm) {
+        bottleForm.addEventListener("submit", () => {
+            sessionStorage.removeItem("pendingBottleForm");
+            sessionStorage.removeItem("reopenBottleModal");
+        });
     }
 
     const saved = localStorage.getItem("inventory_view") || "cards";
@@ -895,17 +1004,12 @@ document.addEventListener("DOMContentLoaded", function () {
     if (buttons.list) buttons.list.addEventListener("click", e => { e.preventDefault(); switchView("list"); });
     if (buttons.table) buttons.table.addEventListener("click", e => { e.preventDefault(); switchView("table"); });
 
-
-
+    /* ---------------- SEARCH LOGIC (unchanged) ---------------- */
 
     function updateSearchParam(value) {
-
         const url = new URL(window.location);
-        if (value) {
-            url.searchParams.set("q", value);
-        } else {
-            url.searchParams.delete("q");
-        }
+        if (value) url.searchParams.set("q", value);
+        else url.searchParams.delete("q");
         window.history.replaceState({}, "", url);
     }
 
@@ -924,46 +1028,19 @@ document.addEventListener("DOMContentLoaded", function () {
             });
         }
 
-        // 🔥 FILTER ONLY THE ACTIVE VIEW
-        if (activeView === "cards") {
-            filter("#cardView [data-search]", el => el.dataset.search);
-        }
-
-        if (activeView === "list") {
-            filter("#listView [data-search]", el => el.dataset.search);
-        }
-
-        if (activeView === "table") {
-            filter("#tableView tbody tr", el => el.innerText);
-        }
+        if (activeView === "cards") filter("#cardView [data-search]", el => el.dataset.search);
+        if (activeView === "list") filter("#listView [data-search]", el => el.dataset.search);
+        if (activeView === "table") filter("#tableView tbody tr", el => el.innerText);
 
         if (q) {
             const total = Number(resultCount.dataset.total || matches);
-            resultCount.textContent =
-                `🔎 Showing ${matches} of ${total} bottle${total !== 1 ? "s" : ""}`;
+            resultCount.textContent = `🔎 Showing ${matches} of ${total} bottle${total !== 1 ? "s" : ""}`;
         } else {
             resultCount.textContent = "";
         }
-
     }
 
-
-    if (searchInput) {
-        searchInput.addEventListener("input", applySearch);
-    }
-
-
-    const pickCheckbox = document.querySelector("#id_is_store_pick");
-    const pickFields = document.querySelector("#storePickFields");
-
-    if (pickCheckbox && pickFields) {
-        function togglePickFields() {
-            pickFields.style.display = pickCheckbox.checked ? "block" : "none";
-        }
-        pickCheckbox.addEventListener("change", togglePickFields);
-        togglePickFields();
-    }
-
+    if (searchInput) searchInput.addEventListener("input", applySearch);
     const priceSelect = document.getElementById("priceSelect");
     const customContainer = document.getElementById("customRangeContainer");
 
@@ -977,70 +1054,20 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
     }
-    /* Clamp review score inputs to 0–10 */
-    document.addEventListener("input", function (e) {
-        if (e.target.matches(".score-input")) {
-            let val = e.target.value;
 
-            if (val === "") return;
+    const minPrice = document.querySelector('#filterForm input[name="min_price"]');
+    const maxPrice = document.querySelector('#filterForm input[name="max_price"]');
 
-            val = Number(val);
-
-            if (val < 0) e.target.value = 0;
-            if (val > 10) e.target.value = 10;
-        }
-    });
-
-    document.addEventListener("input", function (e) {
-    if (e.target.name === "notes") {
-        const max = 1000;
-        const len = e.target.value.length;
-        e.target.nextElementSibling.textContent =
-            `${max - len} characters remaining`;
-    }
-    });
-
-        // --- AUTO-INFER CLIMATE FOR NEW DISTILLERY ---
-    const countryInput = document.getElementById("id_country");
-    const regionInput = document.getElementById("id_region");
-    const climateSelect = document.getElementById("id_climate");
-    const climateHint = document.getElementById("climateHint");
-
-    async function inferClimate() {
-        if (!countryInput || !regionInput || !climateSelect) return;
-        if (!countryInput.value || !regionInput.value) return;
-
-        const url = `/distilleries/infer-climate/?country=${encodeURIComponent(
-            countryInput.value
-        )}&region=${encodeURIComponent(regionInput.value)}`;
-
-        try {
-            const res = await fetch(url);
-            const data = await res.json();
-
-            if (data.climate) {
-                climateSelect.value = data.climate;
-
-                if (climateHint) {
-                    climateHint.style.display = "block";
-                }
-            }
-        } catch (err) {
-            console.error("Climate inference failed", err);
-        }
-    }
-
-    if (countryInput && regionInput) {
-        countryInput.addEventListener("blur", inferClimate);
-        regionInput.addEventListener("blur", inferClimate);
-    }
-
-
-    if (existingSearch && searchInput) {
-        searchInput.value = existingSearch;
-        applySearch();
+    if (minPrice && maxPrice) {
+        [minPrice, maxPrice].forEach(input => {
+            input.addEventListener("change", () => {
+                document.getElementById("filterForm").submit();
+            });
+        });
     }
 });
+
+/* ---------------- DISTILLERY AUTOCOMPLETE (UNCHANGED EXCEPT CACHE CALL) ---------------- */
 
 const createBottleModal = document.getElementById("createBottleModal");
 
@@ -1070,7 +1097,13 @@ createBottleModal.addEventListener("shown.bs.modal", () => {
             add.type = "button";
             add.className = "list-group-item list-group-item-action text-primary";
             add.textContent = `Add "${q}"`;
-            add.onclick = () => openAddDistilleryModal(q);
+            add.onclick = () => {
+                cacheBottleForm("createBottleForm");
+                const bottleId = modal.querySelector("form").dataset.bottleId;
+                cacheEditBottleForm(bottleId);
+                openAddDistilleryModal(q);
+
+            };
             suggestions.appendChild(add);
         } else {
             data.forEach(d => {
@@ -1094,10 +1127,238 @@ createBottleModal.addEventListener("shown.bs.modal", () => {
             suggestions.style.display = "none";
         }
     });
-
-
 });
 
+document.addEventListener("shown.bs.modal", function (e) {
+
+    // Only run for edit bottle modals
+    if (!e.target.id.startsWith("editBottleModal")) return;
+
+    const modal = e.target;
+    const input = modal.querySelector(".edit-distillery-input");
+    const suggestions = modal.querySelector(".edit-distillery-suggestions");
+
+    if (!input || !suggestions || input.dataset.bound) return;
+    input.dataset.bound = "true";
+
+    input.addEventListener("input", async () => {
+        const q = input.value.trim();
+
+        if (q.length < 2) {
+            suggestions.style.display = "none";
+            return;
+        }
+
+        const res = await fetch(`/distilleries/autocomplete/?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+
+        suggestions.innerHTML = "";
+
+        if (data.length === 0) {
+            const add = document.createElement("button");
+            add.type = "button";
+            add.className = "list-group-item list-group-item-action text-primary";
+            add.textContent = `Add "${q}"`;
+
+            add.onclick = () => {
+
+                const form = modal.querySelector("form");
+                const bottleId = form.dataset.bottleId;
+
+                cacheEditBottleForm(bottleId);
+                openAddDistilleryModal(q);
+            };
+
+            suggestions.appendChild(add);
+        }
+        else {
+            data.forEach(d => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "list-group-item list-group-item-action";
+                btn.textContent = d.name + (d.is_verified ? "" : " (pending)");
+                btn.onclick = () => {
+                    input.value = d.name;
+                    suggestions.style.display = "none";
+                };
+                suggestions.appendChild(btn);
+            });
+        }
+
+        suggestions.style.display = "block";
+    });
+
+    document.addEventListener("click", ev => {
+        if (!modal.contains(ev.target)) {
+            suggestions.style.display = "none";
+        }
+    });
+});
+/* ===============================
+   EDIT BOTTLE STATE PRESERVATION
+================================ */
+
+/* Cache edit bottle form */
+function cacheEditBottleForm(bottleId) {
+    const form = document.getElementById(`editBottleForm${bottleId}`);
+    if (!form) return;
+
+    const data = {};
+    new FormData(form).forEach((v, k) => {
+        data[k] = v;
+    });
+
+    sessionStorage.setItem("pendingEditBottleForm", JSON.stringify(data));
+    sessionStorage.setItem("reopenEditBottleModal", bottleId);
+}
+
+/* Restore edit bottle form + reopen modal */
+document.addEventListener("DOMContentLoaded", function () {
+    const cached = sessionStorage.getItem("pendingEditBottleForm");
+    const bottleId = sessionStorage.getItem("reopenEditBottleModal");
+
+    if (!cached || !bottleId) return;
+
+    const form = document.getElementById(`editBottleForm${bottleId}`);
+    const modalEl = document.getElementById(`editBottleModal${bottleId}`);
+
+    if (!form || !modalEl) return;
+
+    const data = JSON.parse(cached);
+
+    Object.entries(data).forEach(([name, value]) => {
+        const field = form.querySelector(`[name="${name}"]`);
+        if (!field) return;
+
+        if (field.type === "checkbox") {
+            field.checked = value === true || value === "on";
+        } else {
+            field.value = value;
+        }
+    });
+
+    new bootstrap.Modal(modalEl).show();
+
+    sessionStorage.removeItem("pendingEditBottleForm");
+    sessionStorage.removeItem("reopenEditBottleModal");
+});
+
+document.addEventListener("DOMContentLoaded", function () {
+    const warningModal = document.getElementById("identityChangeWarningModal");
+    if (!warningModal) return;
+
+    const confirmBtn = document.getElementById("confirmIdentityChangeBtn");
+
+    // If Django raised a warning message, show modal
+    {% if messages %}
+      {% for message in messages %}
+        {% if message.tags == "warning" %}
+          new bootstrap.Modal(warningModal).show();
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+
+    confirmBtn.addEventListener("click", function () {
+        // Find the currently open edit modal form
+        const openEditForm = document.querySelector(
+            '.modal.show form[action*="edit_bottle"]'
+        );
+
+        if (!openEditForm) return;
+
+        // Mark confirmation and resubmit
+        openEditForm.querySelector(
+            'input[name="confirm_identity_change"]'
+        ).value = "1";
+
+        openEditForm.submit();
+    });
+})
+
+async function applyClimateSuggestion(modalEl) {
+    const countryEl = modalEl.querySelector('input[name="country"]');
+    const regionEl  = modalEl.querySelector('input[name="region"]');
+    const climateEl = modalEl.querySelector('select[name="climate"]');
+
+    if (!countryEl || !regionEl || !climateEl) return;
+
+    const country = (countryEl.value || "").trim();
+    const region  = (regionEl.value || "").trim();
+
+    // Only suggest if we have both
+    if (!country || !region) return;
+
+    // Don’t override if user already picked something
+    if (climateEl.value) return;
+
+    const res = await fetch(`/distilleries/suggest-climate/?country=${encodeURIComponent(country)}&region=${encodeURIComponent(region)}`);
+    const data = await res.json();
+
+    if (data.climate) {
+        climateEl.value = data.climate;
+    }
+}
+
+// When Add Distillery modal opens, bind listeners once
+document.addEventListener("shown.bs.modal", function (e) {
+    if (e.target.id !== "addDistilleryModal") return;
+
+    const modal = e.target;
+    if (modal.dataset.climateBound === "true") return;
+    modal.dataset.climateBound = "true";
+
+    const countryEl = modal.querySelector('input[name="country"]');
+    const regionEl  = modal.querySelector('input[name="region"]');
+
+    const handler = () => applyClimateSuggestion(modal);
+
+    if (countryEl) countryEl.addEventListener("blur", handler);
+    if (regionEl)  regionEl.addEventListener("blur", handler);
+});
+
+document.addEventListener("DOMContentLoaded", function () {
+
+    const countryInput = document.querySelector('input[name="country"]');
+    const regionInput  = document.querySelector('input[name="region"]');
+    const climateSelect = document.getElementById("id_climate");
+
+    if (!countryInput || !regionInput || !climateSelect) return;
+
+    // Mark climate as user-set if they change it manually
+    climateSelect.addEventListener("change", () => {
+        climateSelect.dataset.userSet = "true";
+    });
+
+    async function updateClimateSuggestion() {
+        const country = countryInput.value.trim();
+        const region  = regionInput.value.trim();
+
+        if (!country || !region) return;
+
+        // If user already picked something, don't override
+        if (climateSelect.dataset.userSet === "true") return;
+
+        try {
+            const res = await fetch(
+                `/distilleries/suggest-climate/?country=${encodeURIComponent(country)}&region=${encodeURIComponent(region)}`
+            );
+
+            if (!res.ok) return;
+
+            const data = await res.json();
+            if (!data.climate) return;
+
+            climateSelect.value = data.climate;
+
+        } catch (err) {
+            console.warn("Climate suggestion failed", err);
+        }
+    }
+
+    // 🔁 Rerun whenever either field changes
+    countryInput.addEventListener("input", updateClimateSuggestion);
+    regionInput.addEventListener("input", updateClimateSuggestion);
+});
 
 </script>
 

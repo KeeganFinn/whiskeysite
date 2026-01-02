@@ -37,7 +37,7 @@ urlpatterns = [
     path("inventory/edit/<int:bottle_id>/", views.edit_bottle_view, name="edit_bottle"),
     path("inventory/delete/<int:bottle_id>/", views.delete_bottle_view, name="delete_bottle"),
     path("distilleries/autocomplete/", views.distillery_autocomplete, name="distillery_autocomplete"),
-    path("distilleries/add/", views.add_distillery_view, name="add_distillery"),
+    path("distilleries/add/", views.add_distillery, name="add_distillery"),
     path("inventory/", views.inventory_view, name="inventory"),
     path("inventory/export/", views.inventory_export_csv, name="inventory_export_csv"),
     path("inventory/export/", views.inventory_export, name="inventory_export"),
@@ -45,6 +45,7 @@ urlpatterns = [
     # Distillery help
     path("distilleries/infer-climate/", views.infer_climate_view, name="infer_climate"),
     path("distilleries/autocomplete/", views.distillery_autocomplete, name="distillery_autocomplete"),
+    path("distilleries/suggest-climate/", views.suggest_climate_view, name="suggest_climate"),
     path("distilleries/add/", views.add_distillery, name="add_distillery"),
     path("distilleries/review/",views.distillery_review_list,name="distillery_review_list"),
     path("distilleries/review/<int:pk>/",views.distillery_review_detail,name="distillery_review_detail"),
@@ -58,5 +59,20 @@ urlpatterns = [
     path("reviews/", views.review_search, name="review_search"),
     path("canonical-bottles/<int:pk>/review/",views.add_canonical_review,name="add_canonical_review"),
     path("inventory-bottles/<int:pk>/reviews/",views.inventory_to_canonical,name="inventory_to_canonical"),
+
+    # Events
+    path("events/", views.events_list, name="events_list"),
+    path("events/<int:pk>/", views.event_detail, name="event_detail"),
+    path("events/create/", views.event_form, name="event_create"),
+    path("events/<int:pk>/edit/", views.event_form, name="event_edit"),
+    path("events/<int:pk>/delete/", views.event_delete, name="event_delete"),
+    path("events/<int:pk>/add-bottle/", views.event_add_bottle, name="event_add_bottle"),
+    path("events/<int:pk>/participants/add/", views.event_add_participant, name="event_add_participant"),
+    path("events/<int:pk>/participants/<int:user_id>/remove/",views.event_remove_participant,name="event_remove_participant",),
+    path("events/<int:pk>/user-search/",views.event_user_search,name="event_user_search",),
+    path("notifications/<int:pk>/",views.notification_redirect,name="notification_redirect",),
+    path("events/<int:event_id>/bottles/<int:canonical_id>/review/",views.event_add_review,name="event_add_review"),
+    path("events/<int:event_id>/bottles/<int:pk>/delete/",views.event_delete_bottle,name="event_delete_bottle"),
+    path("events/<int:event_id>/bottles/<int:pk>/edit/",views.event_edit_bottle,name="event_edit_bottle"),
 
 ]
