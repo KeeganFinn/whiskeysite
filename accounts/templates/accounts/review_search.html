@@ -6,66 +6,130 @@
 
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h3 class="fw-bold mb-0">Review Bottles</h3>
-
   </div>
 
+  <!-- SEARCH -->
   <form method="get" class="input-group mb-2">
     <span class="input-group-text"><i class="bi bi-search"></i></span>
+
     <input type="text"
+           id="reviewSearchInput"
            name="q"
            class="form-control"
            placeholder="Search bottles or distilleries..."
-           value="{{ q|default:'' }}">
+           value="{{ q|default:'' }}"
+           autocomplete="off">
+
     <button class="btn btn-whiskey" type="submit">Search</button>
   </form>
 
-  <div class="text-muted small mb-3" style="min-height: 18px;">
+  <div class="text-muted small mb-3" style="min-height:18px;">
     {% if q %}
       Showing results for “{{ q }}”
     {% endif %}
   </div>
 
-  {% if bottles %}
-    <div class="list-group shadow-sm">
-      {% for b in bottles %}
-        <a href="{% url 'canonical_bottle_detail' b.id %}?from=review_search"
-           class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+  <!-- RESULTS -->
+  <div id="reviewResults">
 
-          <div>
-            <div class="fw-bold">{{ b.name }}</div>
-            <div class="text-muted small">
-              {% if b.distillery %}{{ b.distillery.name }} • {% endif %}
-              {{ b.get_whiskey_type_display }}
-              {% if b.age %} • {{ b.age }}y{% endif %}
-              {% if b.proof %} • {{ b.proof }} proof{% endif %}
-              {% if b.is_store_pick and b.store_name %} • Store Pick: {{ b.store_name }}{% endif %}
-            </div>
-          </div>
+    {% if bottles %}
+      <div class="list-group shadow-sm mb-3">
+        {% for b in bottles %}
+          <a href="{% url 'canonical_bottle_detail' b.id %}?from=review_search"
+             class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
 
-          <div class="text-end">
-            <div class="fw-bold">
-              {{ b.avg_score|default:0|floatformat:1 }}
+            <div>
+              <div class="fw-bold">{{ b.name }}</div>
+              <div class="text-muted small">
+                {% if b.distillery %}{{ b.distillery.name }} • {% endif %}
+                {{ b.get_whiskey_type_display }}
+                {% if b.age %} • {{ b.age }}y{% endif %}
+                {% if b.proof %} • {{ b.proof }} proof{% endif %}
+                {% if b.is_store_pick and b.store_name %}
+                  • Store Pick: {{ b.store_name }}
+                {% endif %}
+              </div>
             </div>
-            <div class="text-muted small">
-              {{ b.review_count }} review{{ b.review_count|pluralize }}
-            </div>
-          </div>
 
-        </a>
-      {% endfor %}
-    </div>
-  {% else %}
-    {% if q %}
-      <div class="card shadow-sm p-3">
-        <div class="fw-bold mb-1">No bottles found.</div>
-        <div class="text-muted small mb-2">
-          If this bottle doesn’t exist yet, we’ll add an “Add bottle” option next (Step 4.2).
-        </div>
+            <div class="text-end">
+              <div class="fw-bold">
+                {{ b.avg_score|default:0|floatformat:1 }}
+              </div>
+              <div class="text-muted small">
+                {{ b.review_count }} review{{ b.review_count|pluralize }}
+              </div>
+            </div>
+
+          </a>
+        {% endfor %}
       </div>
-    {% else %}
+    {% endif %}
+
+    {% if q and not bottles %}
+      <div class="card shadow-sm p-3">
+        <div class="fw-bold mb-1">No bottles found</div>
+
+        <div class="text-muted small mb-3">
+          Can’t find what you’re looking for?
+          You can add the bottle and review it — even if you only had a pour.
+        </div>
+
+        <a href="{% url 'canonical_add_and_review' %}?name={{ q|urlencode }}"
+           class="btn btn-whiskey btn-sm">
+          Add & Review Bottle
+        </a>
+      </div>
+    {% endif %}
+
+    {% if not q and not bottles %}
       <p class="text-muted">Search for a bottle to start reviewing.</p>
     {% endif %}
-  {% endif %}
 
+  </div>
 </div>
+
+<script>
+const input = document.getElementById("reviewSearchInput");
+let debounceTimer = null;
+
+if (input) {
+  input.addEventListener("input", () => {
+    clearTimeout(debounceTimer);
+
+    const cursorPos = input.selectionStart;
+    const value = input.value;
+
+    debounceTimer = setTimeout(() => {
+      const q = value.trim();
+      const params = new URLSearchParams(window.location.search);
+
+      if (q) params.set("q", q);
+      else params.delete("q");
+
+      fetch(`/reviews/?${params.toString()}`, {
+        headers: { "X-Requested-With": "XMLHttpRequest" }
+      })
+        .then(res => res.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, "text/html");
+
+          const newResults = doc.getElementById("reviewResults");
+          const currentResults = document.getElementById("reviewResults");
+
+          if (newResults && currentResults) {
+            currentResults.innerHTML = newResults.innerHTML;
+
+            // restore focus + cursor
+            input.focus();
+            input.setSelectionRange(cursorPos, cursorPos);
+
+            history.replaceState(null, "", `?${params.toString()}`);
+          }
+        });
+    }, 250);
+  });
+}
+</script>
+
 {% endblock %}

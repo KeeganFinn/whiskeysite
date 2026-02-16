@@ -59,6 +59,7 @@ urlpatterns = [
     path("reviews/", views.review_search, name="review_search"),
     path("canonical-bottles/<int:pk>/review/",views.add_canonical_review,name="add_canonical_review"),
     path("inventory-bottles/<int:pk>/reviews/",views.inventory_to_canonical,name="inventory_to_canonical"),
+    path("bottles/add-and-review/",views.canonical_add_and_review,name="canonical_add_and_review",),
 
     # Events
     path("events/", views.events_list, name="events_list"),
@@ -71,8 +72,8 @@ urlpatterns = [
     path("events/<int:pk>/participants/<int:user_id>/remove/",views.event_remove_participant,name="event_remove_participant",),
     path("events/<int:pk>/user-search/",views.event_user_search,name="event_user_search",),
     path("notifications/<int:pk>/",views.notification_redirect,name="notification_redirect",),
-    path("events/<int:event_id>/bottles/<int:canonical_id>/review/",views.event_add_review,name="event_add_review"),
     path("events/<int:event_id>/bottles/<int:pk>/delete/",views.event_delete_bottle,name="event_delete_bottle"),
     path("events/<int:event_id>/bottles/<int:pk>/edit/",views.event_edit_bottle,name="event_edit_bottle"),
+    path("events/<int:event_id>/bottles/<int:event_bottle_id>/review/",views.add_event_review,name="add_event_review"),
 
 ]

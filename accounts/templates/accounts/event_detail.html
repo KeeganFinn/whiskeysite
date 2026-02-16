@@ -21,10 +21,20 @@
         {% endif %}
     </div>
 
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 align-items-center">
+
+          {% if is_owner %}
+            <button class="btn btn-outline-secondary btn-sm"
+                    id="participantViewToggle"
+                    data-mode="owner"
+                    onclick="toggleParticipantView()">
+              Participant View
+            </button>
+          {% endif %}
+
           {% if is_owner and not event.is_past %}
             <a href="{% url 'event_edit' event.id %}"
-               class="btn btn-outline-secondary btn-sm">
+               class="btn btn-outline-secondary btn-sm owner-only">
               Edit Event
             </a>
           {% endif %}
@@ -33,6 +43,7 @@
              class="btn btn-outline-secondary btn-sm">
             Back to Events
           </a>
+
         </div>
   </div>
 
@@ -56,16 +67,87 @@
       <div class="text-muted">No location set.</div>
     {% endif %}
   </div>
+    <div class="card shadow-sm p-3 mb-4">
+        <h5 class="fw-bold mb-3">Event Leaderboard</h5>
+        {% if leaderboard %}
+          <div class="card shadow-sm p-3 mb-4">
+            <div class="btn-group btn-group-sm mb-2">
+            <button class="btn btn-outline-secondary active"
+                    data-mode="event"
+                    onclick="toggleLeaderboard('event')">
+              Event Ranking
+            </button>
+
+            <button class="btn btn-outline-secondary"
+                    data-mode="mine"
+                    onclick="toggleLeaderboard('mine')">
+              My Ranking
+            </button>
+            </div>
 
 
+            <!-- EVENT LEADERBOARD -->
+            <div id="leaderboard-event">
+              {% for row in leaderboard %}
+                <div class="d-flex justify-content-between align-items-center border rounded p-2 mb-2">
+                  <div>
+                    <span class="fw-bold me-2">#{{ row.rank }}</span>
+                    {{ row.event_bottle.canonical_bottle.name }}
+                  </div>
+                  <span class="badge bg-whiskey">
+                    {{ row.score|floatformat:1 }} / 10
+                  </span>
+                </div>
+              {% endfor %}
+            </div>
 
-  <div class="card shadow-sm p-3 mb-3">
-    <div class="d-flex justify-content-between align-items-center">
-      <h5 class="fw-bold mb-0">Bottles</h5>
+            <!-- MY LEADERBOARD -->
+            <div id="leaderboard-mine" style="display:none;">
+              {% for row in my_leaderboard %}
+                <div class="d-flex justify-content-between align-items-center border rounded p-2 mb-2">
+                  <div>
+                    <span class="fw-bold me-2">#{{ row.rank }}</span>
+                    {{ row.event_bottle.canonical_bottle.name }}
+                  </div>
+                  <span class="badge bg-whiskey">
+                    {{ row.score|floatformat:1 }} / 10
+                  </span>
+                </div>
+              {% endfor %}
+            </div>
+        {% endif %}
     </div>
+  <div class="card shadow-sm p-3 mb-3">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <h5 class="fw-bold mb-0">Bottles</h5>
+
+          <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary"
+                    type="button"
+                    onclick="toggleAll('.my-details', true)">
+              Show My Reviews
+            </button>
+            <button class="btn btn-outline-secondary"
+                    type="button"
+                    onclick="toggleAll('.my-details', false)">
+              Hide My Reviews
+            </button>
+
+            <button class="btn btn-outline-secondary"
+                    type="button"
+                    onclick="toggleAll('.all-details', true)">
+              Show All
+            </button>
+            <button class="btn btn-outline-secondary"
+                    type="button"
+                    onclick="toggleAll('.all-details', false)">
+              Hide All
+            </button>
+          </div>
+        </div>
 
        {% if is_owner and not event.is_past %}
-        <div class="card shadow-sm p-3 mb-4">
+        <div class="card shadow-sm p-3 mb-4 owner-only">
           <h5 class="fw-bold mb-3">Add Bottle to Event</h5>
 
           <form method="post" action="{% url 'event_add_bottle' event.id %}"  id="eventBottleForm">
@@ -137,15 +219,29 @@
         </div>
         {% endif %}
 
-
-    <hr class="my-3">
-
     {% if bottles %}
         {% for eb in bottles %}
         <div class="card shadow-sm mb-2">
-          <div class="card-body d-flex justify-content-between align-items-center">
-            <div>
-              <strong>{{ eb.canonical_bottle.name }}</strong>
+            <div class="card-body">
+                <div class="d-flex align-items-center gap-2">
+                {% if eb.rank %}
+                  <span class="badge bg-warning text-dark"
+                        data-rank-event>
+                    #{{ eb.rank }}
+                  </span>
+                {% endif %}
+
+                {% if eb.my_rank %}
+                  <span class="badge bg-warning text-dark"
+                        data-rank-mine
+                        style="display:none;">
+                    My #{{ eb.my_rank }}
+                  </span>
+                {% endif %}
+
+                  <strong>{{ eb.canonical_bottle.name }}</strong>
+                </div>
+
               <div class="text-muted small">
                 {{ eb.canonical_bottle.get_whiskey_type_display }}
                 {% if eb.canonical_bottle.distillery %}
@@ -153,22 +249,131 @@
                 {% endif %}
                 • Proof {{ eb.canonical_bottle.proof }}
               </div>
+
+              <!-- ACTION ROW -->
+              <div class="mt-2 d-flex flex-wrap gap-2 align-items-center">
+
+                <!-- RATINGS -->
+                <span class="badge bg-light text-dark border">
+                  Event Avg:
+                  {% if eb.agg.overall %}
+                    {{ eb.agg.overall|floatformat:1 }}
+                  {% else %}
+                    —
+                  {% endif %}
+                  <span class="text-muted">({{ eb.agg.review_count }})</span>
+                </span>
+
+                <span class="badge bg-light text-dark border">
+                  My Rating:
+                  {% if eb.user_overall %}
+                    {{ eb.user_overall|floatformat:1 }}
+                  {% else %}
+                    —
+                  {% endif %}
+                </span>
+
+                <div class="flex-grow-1"></div>
+                    {% if is_attendee and event.is_active %}
+                    <button class="btn btn-sm btn-whiskey"
+                            data-review-url="{% url 'add_event_review' event.id eb.id %}"
+                            onclick="openReviewModal(this)">
+                      {% if eb.user_review %}
+                        Edit Review
+                      {% else %}
+                        Add Review
+                      {% endif %}
+                    </button>
+                {% endif %}
+                {% if is_owner and not event.is_past %}
+                  <a href="{% url 'event_edit_bottle' event.id eb.id %}"
+                     class="btn btn-sm btn-outline-secondary owner-only">
+                    Edit
+                  </a>
+
+                  <a href="{% url 'event_delete_bottle' event.id eb.id %}"
+                     class="btn btn-sm btn-outline-danger owner-only">
+                    Remove
+                  </a>
+                {% endif %}
+              </div>
+
+              <!-- MY DETAILS -->
+              <div class="collapse mt-2 my-details" id="myDetails{{ eb.id }}">
+                {% if eb.user_review %}
+                  <div class="card card-body">
+                    <div class="small text-muted mb-1">My breakdown</div>
+                    <div class="d-flex flex-wrap gap-2">
+                      <span class="badge bg-light text-dark border">Nose: {{ eb.user_review.nose }}</span>
+                      <span class="badge bg-light text-dark border">Taste: {{ eb.user_review.taste }}</span>
+                      <span class="badge bg-light text-dark border">Finish: {{ eb.user_review.finish }}</span>
+                      <span class="badge bg-light text-dark border">Value: {{ eb.user_review.value }}</span>
+                    </div>
+                    {% if eb.user_review.notes %}
+                      <div class="mt-2">{{ eb.user_review.notes }}</div>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  <div class="text-muted small">No review yet.</div>
+                {% endif %}
+              </div>
+
+              <!-- ALL USERS -->
+              <div class="collapse mt-2 all-details" id="allDetails{{ eb.id }}">
+                <div class="card card-body">
+                  <div class="small text-muted mb-1">Event averages</div>
+                  <div class="d-flex flex-wrap gap-2">
+                    <span class="badge bg-light text-dark border">
+                      Nose: {{ eb.agg.avg_nose|floatformat:1|default:"—" }}
+                    </span>
+                    <span class="badge bg-light text-dark border">
+                      Taste: {{ eb.agg.avg_taste|floatformat:1|default:"—" }}
+                    </span>
+                    <span class="badge bg-light text-dark border">
+                      Finish: {{ eb.agg.avg_finish|floatformat:1|default:"—" }}
+                    </span>
+                    <span class="badge bg-light text-dark border">
+                      Value: {{ eb.agg.avg_value|floatformat:1|default:"—" }}
+                    </span>
+                    {% if eb.all_reviews %}
+                      <hr class="my-2">
+                      <div class="small text-muted mb-2">All reviews</div>
+
+                      {% for r in eb.all_reviews %}
+                        <div class="border rounded p-2 mb-2">
+                          <div class="fw-semibold">
+                            {{ r.reviewer.username }}
+                            <span class="text-muted small">
+                              ({{ r.created_at|date:"M j, Y g:i A" }})
+                            </span>
+                          </div>
+
+                          <div class="small text-muted mb-1">
+                            Nose: {{ r.nose }} ·
+                            Taste: {{ r.taste }} ·
+                            Finish: {{ r.finish }} ·
+                            Value: {{ r.value }}
+                            {% if r.overall_10 is not None %}
+                              · <span class="fw-bold">Overall: {{ r.overall_10|floatformat:1 }}/10</span>
+                            {% endif %}
+                          </div>
+
+                          {% if r.notes %}
+                            <div>{{ r.notes }}</div>
+                          {% else %}
+                            <div class="text-muted small fst-italic">No notes.</div>
+                          {% endif %}
+                        </div>
+                      {% endfor %}
+                    {% else %}
+                      <div class="text-muted small">No reviews yet.</div>
+                    {% endif %}
+                  </div>
+
+                </div>
+              </div>
             </div>
 
-            {% if is_owner and not event.is_past %}
-              <div class="d-flex gap-2">
-                <a href="{% url 'event_edit_bottle' event.id eb.id %}"
-                   class="btn btn-sm btn-outline-secondary">
-                  Edit
-                </a>
-
-                <a href="{% url 'event_delete_bottle' event.id eb.id %}"
-                   class="btn btn-sm btn-outline-danger">
-                  Remove
-                </a>
-              </div>
-            {% endif %}
-          </div>
         </div>
         {% endfor %}
       {% else %}
@@ -184,7 +389,7 @@
         {% if is_owner %}
           <form method="post"
                 action="{% url 'event_add_participant' event.id %}"
-                class="input-group mb-3">
+                class="input-group mb-3 owner-only">
             {% csrf_token %}
             <input class="form-control"
                    name="username"
@@ -208,7 +413,7 @@
 
                 {% if is_owner and p.user != event.owner and not event.is_past %}
                   <a href="{% url 'event_remove_participant' event.id p.user.id %}"
-                     class="btn btn-sm btn-outline-danger">
+                     class="btn btn-sm btn-outline-danger owner-only">
                     Remove
                   </a>
                 {% endif %}
@@ -287,6 +492,23 @@
         </div>
 
       </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="reviewModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Review Bottle</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body" id="reviewModalBody">
+        <div class="text-center text-muted py-4">
+          Loading…
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -436,6 +658,80 @@ function bindClimateSuggestion(modal) {
     regionInput.addEventListener("input", suggest);
 }
 
+function toggleAll(selector, show) {
+  document.querySelectorAll(selector).forEach(el => {
+    const inst = bootstrap.Collapse.getOrCreateInstance(el, { toggle: false });
+    show ? inst.show() : inst.hide();
+  });
+}
+
+
+function openReviewModal(btn) {
+  const url = btn.dataset.reviewUrl;
+  const modalEl = document.getElementById("reviewModal");
+  const body = document.getElementById("reviewModalBody");
+
+  body.innerHTML = `<div class="text-center text-muted py-4">Loading…</div>`;
+
+  fetch(url, {
+    headers: { "X-Requested-With": "XMLHttpRequest" }
+  })
+    .then(res => res.text())
+    .then(html => {
+      body.innerHTML = html;
+      new bootstrap.Modal(modalEl).show();
+    });
+}
+
+function toggleLeaderboard(mode) {
+  const showEvent = (mode === 'event');
+
+  /* --- Leaderboards --- */
+  const eventBoard = document.getElementById('leaderboard-event');
+  const myBoard = document.getElementById('leaderboard-mine');
+
+  if (eventBoard) eventBoard.style.display = showEvent ? '' : 'none';
+  if (myBoard) myBoard.style.display = showEvent ? 'none' : '';
+
+  /* --- Bottle rank badges --- */
+  document.querySelectorAll('[data-rank-event]').forEach(el => {
+    el.style.display = showEvent ? 'inline-block' : 'none';
+  });
+
+  document.querySelectorAll('[data-rank-mine]').forEach(el => {
+    el.style.display = showEvent ? 'none' : 'inline-block';
+  });
+
+  /* --- Button state --- */
+  document.querySelectorAll('.btn-group .btn').forEach(btn => {
+    btn.classList.remove('active');
+  });
+
+  document
+    .querySelector(`.btn-group .btn[data-mode="${mode}"]`)
+    ?.classList.add('active');
+}
+
+function toggleParticipantView() {
+  const btn = document.getElementById('participantViewToggle');
+  const isOwnerView = btn.dataset.mode === 'owner';
+
+  document.querySelectorAll('.owner-only').forEach(el => {
+    el.style.display = isOwnerView ? 'none' : '';
+  });
+
+  if (isOwnerView) {
+    btn.dataset.mode = 'participant';
+    btn.textContent = 'Owner View';
+    btn.classList.remove('btn-outline-secondary');
+    btn.classList.add('btn-outline-warning');
+  } else {
+    btn.dataset.mode = 'owner';
+    btn.textContent = 'Participant View';
+    btn.classList.remove('btn-outline-warning');
+    btn.classList.add('btn-outline-secondary');
+  }
+}
 </script>
 
 {% endblock %}

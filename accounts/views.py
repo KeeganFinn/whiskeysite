@@ -90,17 +90,26 @@ from django.utils import timezone
 @login_required
 def home_view(request):
     notifications = request.user.notifications.filter(is_read=False)
+    now = timezone.now()
 
-    active_events = (
+    base_qs = (
         Event.objects
         .filter(
             Q(owner=request.user) |
             Q(participants__user=request.user),
-            end_time__gte=timezone.now(),  # active OR upcoming
+            end_time__gte=now,   # exclude past events
         )
         .distinct()
-        .order_by("start_time")
     )
+
+    active_events = base_qs.filter(
+        start_time__lte=now,
+        end_time__gte=now,
+    ).order_by("end_time")
+
+    upcoming_events = base_qs.filter(
+        start_time__gt=now
+    ).order_by("start_time")
 
     return render(
         request,
@@ -108,6 +117,7 @@ def home_view(request):
         {
             "notifications": notifications,
             "active_events": active_events,
+            "upcoming_events": upcoming_events,
         },
     )
 
@@ -1000,6 +1010,61 @@ def distillery_review_list(request):
     })
 
 @login_required
+def canonical_add_and_review(request):
+    prefill_name = request.GET.get("name", "").strip()
+
+    if request.method == "POST":
+        name = request.POST.get("name", "").strip()
+        distillery_name = request.POST.get("distillery_name", "").strip()
+        whiskey_type = request.POST.get("whiskey_type")
+        age = request.POST.get("age") or None
+        proof = request.POST.get("proof")
+        is_store_pick = bool(request.POST.get("is_store_pick"))
+        store_name = request.POST.get("store_name", "").strip()
+
+        if not name or not whiskey_type or not proof:
+            messages.error(request, "Bottle name, whiskey type, and proof are required.")
+            return redirect(request.path)
+
+        # --------------------------------------------------
+        # Distillery (existing or new)
+        # --------------------------------------------------
+        distillery = None
+        if distillery_name:
+            distillery = Distillery.objects.filter(
+                name__iexact=distillery_name
+            ).first()
+
+        # --------------------------------------------------
+        # Create canonical bottle
+        # --------------------------------------------------
+        bottle = CanonicalBottle.objects.create(
+            name=name,
+            distillery=distillery,
+            whiskey_type=whiskey_type,
+            age=age,
+            proof=proof,
+            is_store_pick=is_store_pick,
+            store_name=store_name if is_store_pick else "",
+            created_by=request.user,
+        )
+
+        # --------------------------------------------------
+        # Redirect immediately to canonical review
+        # --------------------------------------------------
+        return redirect("add_canonical_review", pk=bottle.id)
+
+    return render(
+        request,
+        "accounts/canonical_add_and_review.html",
+        {
+            "prefill_name": prefill_name,
+            "WHISKEY_TYPES": WHISKEY_TYPES,
+            "CLIMATE_CHOICES": CLIMATE_CHOICES,
+        },
+    )
+
+@login_required
 def infer_climate_view(request):
     country = request.GET.get("country")
     region = request.GET.get("region")
@@ -1247,20 +1312,21 @@ def event_create(request):
 @login_required
 def add_event_review(request, event_id, event_bottle_id):
     event = get_object_or_404(Event, pk=event_id)
-    event_bottle = get_object_or_404(
-        EventBottle,
-        pk=event_bottle_id,
-        event=event
-    )
+    event_bottle = get_object_or_404(EventBottle, pk=event_bottle_id, event=event)
 
-    # 🔒 Permission checks
-    if not EventParticipant.objects.filter(event=event, user=request.user).exists():
+    # 🔒 Must be participant or owner
+    if not (
+        event.owner_id == request.user.id or
+        EventParticipant.objects.filter(event=event, user=request.user).exists()
+    ):
         return HttpResponseForbidden("You are not part of this event.")
 
-    if event.is_past():
-        return HttpResponseForbidden("This event is closed.")
+    # 🔒 Reviews only while event is active
+    if event.is_past:
+        messages.error(request, "This event is closed for reviews.")
+        return redirect("event_detail", event.id)
 
-    # Existing review (editable until event ends)
+    # ✅ GET existing review ONLY (no creation here)
     review = BottleReview.objects.filter(
         event=event,
         event_bottle=event_bottle,
@@ -1268,27 +1334,30 @@ def add_event_review(request, event_id, event_bottle_id):
     ).first()
 
     if request.method == "POST":
-        data = {
-            "nose": int(request.POST["nose"]),
-            "taste": int(request.POST["taste"]),
-            "finish": int(request.POST["finish"]),
-            "value": int(request.POST["value"]),
-            "notes": request.POST.get("notes", "")[:1000],
-        }
+        review = BottleReview.objects.filter(
+            event=event,
+            event_bottle=event_bottle,
+            reviewer=request.user,
+        ).first()
 
-        if review:
-            for k, v in data.items():
-                setattr(review, k, v)
-            review.save()
-        else:
-            BottleReview.objects.create(
-                bottle=event_bottle.bottle,
+        if not review:
+            review = BottleReview(
                 reviewer=request.user,
                 event=event,
                 event_bottle=event_bottle,
-                **data,
+                bottle=event_bottle.canonical_bottle,
             )
 
+        # Assign fields EXPLICITLY
+        review.nose = int(request.POST["nose"])
+        review.taste = int(request.POST["taste"])
+        review.finish = int(request.POST["finish"])
+        review.value = int(request.POST["value"])
+        review.notes = request.POST.get("notes", "")[:1000]
+
+        review.save()
+
+        messages.success(request, "Your review has been saved.")
         return redirect("event_detail", event.id)
 
     return render(
@@ -1300,6 +1369,7 @@ def add_event_review(request, event_id, event_bottle_id):
             "review": review,
         },
     )
+
 
 @login_required
 def events_list(request):
@@ -1337,15 +1407,21 @@ def event_detail(request, pk):
     event = get_object_or_404(Event, pk=pk)
 
     is_owner = (event.owner_id == request.user.id)
-    is_attendee = is_owner or EventParticipant.objects.filter(event=event, user=request.user).exists()
+    is_attendee = (
+        is_owner or
+        EventParticipant.objects.filter(event=event, user=request.user).exists()
+    )
 
-    # Hide location after event ends from non-attendees
     show_location = (not event.is_past) or is_attendee
 
     bottles = (
         EventBottle.objects
         .filter(event=event)
-        .select_related("canonical_bottle", "canonical_bottle__distillery", "added_by")
+        .select_related(
+            "canonical_bottle",
+            "canonical_bottle__distillery",
+            "added_by",
+        )
         .order_by("added_at")
     )
 
@@ -1355,6 +1431,175 @@ def event_detail(request, pk):
         .select_related("user")
         .order_by("added_at")
     )
+
+    # =====================================================
+    # REVIEWS: user review, aggregates, all comments
+    # =====================================================
+
+    user_reviews_by_event_bottle = {}
+    agg_by_event_bottle = {}
+    all_reviews_by_event_bottle = {}
+
+    # (A) Current user's reviews
+    if is_attendee:
+        my_reviews = (
+            BottleReview.objects
+            .filter(
+                event=event,
+                reviewer=request.user,
+                event_bottle__in=bottles,
+            )
+        )
+        user_reviews_by_event_bottle = {
+            r.event_bottle_id: r for r in my_reviews
+        }
+
+    # (B) Aggregates per bottle
+    aggs = (
+        BottleReview.objects
+        .filter(event=event, event_bottle__in=bottles)
+        .values("event_bottle_id")
+        .annotate(
+            review_count=Count("id"),
+            avg_nose=Avg("nose"),
+            avg_taste=Avg("taste"),
+            avg_finish=Avg("finish"),
+            avg_value=Avg("value"),
+        )
+    )
+
+    for row in aggs:
+        parts = [
+            row.get("avg_nose"),
+            row.get("avg_taste"),
+            row.get("avg_finish"),
+            row.get("avg_value"),
+        ]
+        parts = [p for p in parts if p is not None]
+        overall = (sum(parts) / len(parts)) if parts else None
+
+        agg_by_event_bottle[row["event_bottle_id"]] = {
+            "review_count": row["review_count"],
+            "avg_nose": row.get("avg_nose"),
+            "avg_taste": row.get("avg_taste"),
+            "avg_finish": row.get("avg_finish"),
+            "avg_value": row.get("avg_value"),
+            "overall": overall,
+        }
+
+    # (C) All reviews + comments
+    all_reviews = (
+        BottleReview.objects
+        .filter(event=event, event_bottle__in=bottles)
+        .select_related("reviewer")
+        .order_by("created_at")
+    )
+
+    for r in all_reviews:
+        # final_score is weighted /100 → display /10 for events
+        r.overall_10 = (r.final_score / 10.0) if r.final_score is not None else None
+
+        all_reviews_by_event_bottle.setdefault(
+            r.event_bottle_id, []
+        ).append(r)
+
+    # =====================================================
+    # ATTACH TO EACH EventBottle (for template)
+    # =====================================================
+    for eb in bottles:
+        user_review = user_reviews_by_event_bottle.get(eb.id)
+
+        eb.user_review = user_review
+        eb.all_reviews = all_reviews_by_event_bottle.get(eb.id, [])
+
+        if user_review and user_review.final_score is not None:
+            # Always derive from canonical weighted score
+            eb.user_overall = user_review.final_score / 10.0
+        else:
+            eb.user_overall = None
+
+        eb.agg = agg_by_event_bottle.get(
+            eb.id,
+            {
+                "review_count": 0,
+                "avg_nose": None,
+                "avg_taste": None,
+                "avg_finish": None,
+                "avg_value": None,
+                "overall": None,
+            },
+        )
+
+    # =====================================================
+
+    # =====================================================
+    # EVENT LEADERBOARD
+    # =====================================================
+
+    leaderboard = []
+
+    for eb in bottles:
+        agg = agg_by_event_bottle.get(eb.id)
+        if not agg or agg["overall"] is None:
+            continue
+
+        leaderboard.append({
+            "event_bottle": eb,
+            "score": agg["overall"],  # true /10
+        })
+
+    # Sort strictly by score (highest first)
+    leaderboard.sort(key=lambda x: x["score"], reverse=True)
+
+    # Assign ranks WITH TIE HANDLING
+    last_score = None
+    current_rank = 0
+
+    for idx, row in enumerate(leaderboard, start=1):
+        if last_score is None or row["score"] < last_score:
+            current_rank = idx
+        row["rank"] = current_rank
+        last_score = row["score"]
+
+    # Map ranks back to bottles
+    rank_by_event_bottle = {
+        row["event_bottle"].id: row["rank"]
+        for row in leaderboard
+    }
+
+    for eb in bottles:
+        eb.rank = rank_by_event_bottle.get(eb.id)
+
+    my_leaderboard = []
+
+    for eb in bottles:
+        if eb.user_overall is not None:
+            my_leaderboard.append({
+                "event_bottle": eb,
+                "score": eb.user_overall,  # already /10
+            })
+
+    # Sort by my score
+    my_leaderboard.sort(key=lambda x: x["score"], reverse=True)
+
+    # Assign ranks (ties handled)
+    last_score = None
+    current_rank = 0
+
+    for idx, row in enumerate(my_leaderboard, start=1):
+        if last_score is None or row["score"] < last_score:
+            current_rank = idx
+        row["rank"] = current_rank
+        last_score = row["score"]
+
+    # Attach my_rank to bottles
+    my_rank_by_bottle = {
+        row["event_bottle"].id: row["rank"]
+        for row in my_leaderboard
+    }
+
+    for eb in bottles:
+        eb.my_rank = my_rank_by_bottle.get(eb.id)
 
     return render(
         request,
@@ -1368,7 +1613,8 @@ def event_detail(request, pk):
             "participants": participants,
             "WHISKEY_TYPES": WHISKEY_TYPES,
             "CLIMATE_CHOICES": CLIMATE_CHOICES,
-
+            "leaderboard": leaderboard,
+            "my_leaderboard": my_leaderboard,
         },
     )
 
@@ -1396,7 +1642,7 @@ def event_form(request, pk=None):
 
         obj.save()
 
-        # ✅ owner automatically becomes participant (only on create)
+        # owner automatically becomes participant (only on create)
         if not event:
             EventParticipant.objects.get_or_create(
                 event=obj,
@@ -1615,58 +1861,6 @@ def notification_redirect(request, pk):
         notification.save(update_fields=["is_read"])
 
     return redirect(notification.link)
-
-@login_required
-def event_add_review(request, event_id, canonical_id):
-    event = get_object_or_404(Event, pk=event_id)
-    bottle = get_object_or_404(CanonicalBottle, pk=canonical_id)
-
-    # Permission checks
-    is_attendee = (
-        event.owner_id == request.user.id or
-        EventParticipant.objects.filter(event=event, user=request.user).exists()
-    )
-
-    if not is_attendee:
-        return HttpResponseForbidden()
-
-    if event.is_past:
-        messages.error(request, "This event is closed for reviews.")
-        return redirect("event_detail", pk=event.id)
-
-    # Prevent duplicate event review
-    existing = BottleReview.objects.filter(
-        reviewer=request.user,
-        bottle=bottle,
-        event=event
-    ).first()
-
-    if request.method == "POST":
-        review = existing or BottleReview(
-            reviewer=request.user,
-            bottle=bottle,
-            event=event,
-        )
-
-        review.nose = int(request.POST["nose"])
-        review.taste = int(request.POST["taste"])
-        review.finish = int(request.POST["finish"])
-        review.value = int(request.POST["value"])
-        review.notes = request.POST.get("notes", "")[:1000]
-
-        review.save()
-
-        return redirect("event_detail", pk=event.id)
-
-    return render(
-        request,
-        "accounts/add_review.html",
-        {
-            "canonical": bottle,
-            "event": event,
-            "review": existing,
-        }
-    )
 
 @login_required
 def event_delete_bottle(request, event_id, pk):

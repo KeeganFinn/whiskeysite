@@ -1,67 +1,98 @@
-{% extends "base.html" %}
+
 {% block title %}Review Bottle{% endblock %}
 
 {% block content %}
 <div class="col-lg-6 offset-lg-3 mt-4">
 
-  <h4 class="fw-bold mb-2">
-    {{ event_bottle.canonical_bottle.name }}
-  </h4>
+  <div class="card shadow-sm p-4">
 
-  <div class="text-muted mb-3">
-    Event: <strong>{{ event.name }}</strong>
+    <h4 class="fw-bold mb-1">
+      Review: {{ event_bottle.canonical_bottle.name }}
+    </h4>
+
+    <div class="text-muted small mb-3">
+      {{ event.name }}
+    </div>
+
+    <form method="post" action="{% url 'add_event_review' event.id event_bottle.id %}">
+      {% csrf_token %}
+
+      <!-- Nose -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Nose (0-10)</label>
+        <input type="number"
+               name="nose"
+               min="0"
+               max="10"
+               step="1"
+               class="form-control"
+               required
+               value="{{ review.nose|default_if_none:'' }}">
+      </div>
+
+      <!-- Taste -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Taste (0-10)</label>
+        <input type="number"
+               name="taste"
+               min="0"
+               max="10"
+               step="1"
+               class="form-control"
+               required
+               value="{{ review.taste|default_if_none:'' }}">
+      </div>
+
+      <!-- Finish -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Finish (0-10)</label>
+        <input type="number"
+               name="finish"
+               min="0"
+               max="10"
+               step="1"
+               class="form-control"
+               required
+               value="{{ review.finish|default_if_none:'' }}">
+      </div>
+
+      <!-- Value -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Value (0-10)</label>
+        <input type="number"
+               name="value"
+               min="0"
+               max="10"
+               step="1"
+               class="form-control"
+               required
+               value="{{ review.value|default_if_none:'' }}">
+      </div>
+
+      <!-- Notes -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Notes</label>
+        <textarea name="notes"
+                  rows="4"
+                  maxlength="1000"
+                  class="form-control"
+                  placeholder="Optional tasting notes...">{{ review.notes|default_if_none:'' }}</textarea>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button class="btn btn-whiskey w-100">
+          {% if review %}Update Review{% else %}Save Review{% endif %}
+        </button>
+
+        <a href="{% url 'event_detail' event.id %}"
+           class="btn btn-outline-secondary w-100">
+          Cancel
+        </a>
+      </div>
+
+    </form>
+
   </div>
-
-  <form method="post">
-    {% csrf_token %}
-
-    <div class="row g-3">
-      <div class="col-md-6">
-        <label class="form-label">Nose</label>
-        <input type="number" name="nose" min="0" max="10"
-               class="form-control score-input" required>
-      </div>
-
-      <div class="col-md-6">
-        <label class="form-label">Taste</label>
-        <input type="number" name="taste" min="0" max="10"
-               class="form-control score-input" required>
-      </div>
-
-      <div class="col-md-6">
-        <label class="form-label">Finish</label>
-        <input type="number" name="finish" min="0" max="10"
-               class="form-control score-input" required>
-      </div>
-
-      <div class="col-md-6">
-        <label class="form-label">Value</label>
-        <input type="number" name="value" min="0" max="10"
-               class="form-control score-input" required>
-      </div>
-    </div>
-
-    <div class="mt-3">
-      <label class="form-label">Notes</label>
-      <textarea name="notes"
-                rows="3"
-                maxlength="1000"
-                class="form-control"
-                placeholder="Optional tasting notes"></textarea>
-    </div>
-
-    <div class="d-flex gap-2 mt-4">
-      <button class="btn btn-whiskey w-100">
-        Submit Review
-      </button>
-
-      <a href="{% url 'event_detail' event.id %}"
-         class="btn btn-outline-secondary w-100">
-        Cancel
-      </a>
-    </div>
-
-  </form>
 
 </div>
 {% endblock %}

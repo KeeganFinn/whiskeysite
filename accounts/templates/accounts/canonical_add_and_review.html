@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Add & Review Bottle{% endblock %}
+
+{% block content %}
+<div class="col-lg-8 offset-lg-2 mt-4">
+
+  <h3 class="fw-bold mb-3">Add & Review Bottle</h3>
+
+  <div class="card shadow-sm p-3">
+
+    <form method="post">
+      {% csrf_token %}
+
+      <!-- Bottle Name -->
+      <div class="mb-3">
+        <label class="form-label">Bottle Name *</label>
+        <input class="form-control"
+               name="name"
+               required
+               value="{{ prefill_name }}">
+      </div>
+
+      <!-- Distillery -->
+      <div class="mb-3 position-relative">
+        <label class="form-label">Distillery</label>
+
+        <input type="text"
+               id="distilleryInput"
+               name="distillery_name"
+               class="form-control"
+               autocomplete="off"
+               placeholder="Start typing…">
+
+        <div id="distillerySuggestions"
+             class="list-group position-absolute w-100 shadow-sm"
+             style="z-index:1050; display:none;"></div>
+      </div>
+
+      <!-- Whiskey Type -->
+      <div class="mb-3">
+        <label class="form-label">Whiskey Type *</label>
+        <select name="whiskey_type" class="form-select" required>
+          <option value="">Select type</option>
+          {% for value,label in WHISKEY_TYPES %}
+            <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="row g-2 mb-3">
+        <div class="col">
+          <label class="form-label">Age</label>
+          <input type="number" name="age" class="form-control">
+        </div>
+
+        <div class="col">
+          <label class="form-label">Proof *</label>
+          <input type="number" step="0.1" name="proof" class="form-control" required>
+        </div>
+      </div>
+
+      <div class="form-check mb-2">
+        <input class="form-check-input" type="checkbox" name="is_store_pick" id="storePickCheck">
+        <label class="form-check-label" for="storePickCheck">
+          Store Pick
+        </label>
+      </div>
+
+      <div class="mb-3">
+        <input class="form-control"
+               name="store_name"
+               placeholder="Store name (optional)">
+      </div>
+
+      <button class="btn btn-whiskey w-100">
+        Add Bottle & Review
+      </button>
+
+    </form>
+  </div>
+</div>
+
+{% include "accounts/partials/add_distillery_modal.html" %}
+
+<script>
+const input = document.getElementById("distilleryInput");
+const suggestions = document.getElementById("distillerySuggestions");
+
+if (input) {
+  input.addEventListener("input", async () => {
+    const q = input.value.trim();
+
+    if (q.length < 2) {
+      suggestions.style.display = "none";
+      return;
+    }
+
+    const res = await fetch(`/distilleries/autocomplete/?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+
+    suggestions.innerHTML = "";
+
+    if (data.length === 0) {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "list-group-item list-group-item-action text-primary";
+      add.textContent = `Add "${q}"`;
+      add.onclick = () => {
+        openAddDistilleryModal(q);
+      };
+      suggestions.appendChild(add);
+    } else {
+      data.forEach(d => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "list-group-item list-group-item-action";
+        btn.textContent = d.name;
+        btn.onclick = () => {
+          input.value = d.name;
+          suggestions.style.display = "none";
+        };
+        suggestions.appendChild(btn);
+      });
+    }
+
+    suggestions.style.display = "block";
+  });
+
+  document.addEventListener("click", e => {
+    if (!suggestions.contains(e.target) && e.target !== input) {
+      suggestions.style.display = "none";
+    }
+  });
+}
+</script>
+
+{% endblock %}

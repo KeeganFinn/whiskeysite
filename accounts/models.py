@@ -212,7 +212,6 @@ class BottleReview(models.Model):
         related_name="bottle_reviews"
     )
 
-    # 🔥 NEW (nullable)
     event = models.ForeignKey(
         "Event",
         null=True,
@@ -243,7 +242,7 @@ class BottleReview(models.Model):
         validators=[MinValueValidator(0), MaxValueValidator(10)]
     )
 
-    final_score = models.FloatField(editable=False)
+    final_score = models.FloatField(editable=False, null=True, blank=True)
 
     notes = models.TextField(blank=True)
 
@@ -269,21 +268,24 @@ class BottleReview(models.Model):
             self.event = self.event_bottle.event
 
     def save(self, *args, **kwargs):
-        if self.event_bottle and not self.event:
-            self.event = self.event_bottle.event
+        if self.event_bottle_id and not self.event_id:
+            self.event_id = self.event_bottle.event_id
 
+        # All scores MUST exist for any saved review
         self.final_score = (
                 self.nose * 2.5 +
                 self.taste * 4.0 +
                 self.finish * 2.0 +
                 self.value * 1.5
         )
+
         super().save(*args, **kwargs)
 
     def __str__(self):
+        score = f"{self.final_score:.1f}" if self.final_score is not None else "—"
         if self.event:
-            return f"{self.bottle} – {self.final_score:.1f} (Event)"
-        return f"{self.bottle} – {self.final_score:.1f}"
+            return f"{self.bottle} – {score} (Event)"
+        return f"{self.bottle} – {score}"
 
 class DistilleryAuditLog(models.Model):
     ACTION_CHOICES = [
