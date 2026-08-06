@@ -16,6 +16,25 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def _load_dotenv(path):
+    """Minimal .env loader (no dependency). Real env vars take precedence, so a
+    value already set in the environment is never overwritten by the file."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip())
+    except FileNotFoundError:
+        pass
+
+
+# Load a local .env if present. This file holds secrets and is gitignored.
+_load_dotenv(BASE_DIR / ".env")
+
 # --- Distillery web lookup ---
 # Optional Gemini API fallback for the distillery review screen. When
 # GEMINI_API_KEY is unset, lookups use Wikipedia only.
