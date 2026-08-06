@@ -10,40 +10,93 @@
     <div class="card shadow-sm p-4 mb-4">
         <h5 class="fw-bold mb-1">{{ distillery.name }}</h5>
 
-        <p class="text-muted small">
+        <p class="text-muted small mb-2">
             Added by {{ distillery.added_by|default:"Unknown" }}
             • {{ distillery.created_at|date:"M j, Y" }}
         </p>
+
+        {% if canonical_bottles or inventory_bottles %}
+            <div class="small">
+                <span class="text-muted">Bottles entered with this distillery:</span>
+                <div class="d-flex flex-wrap gap-1 mt-1">
+                    {% for b in canonical_bottles %}
+                        <a href="{% url 'canonical_bottle_detail' b.id %}?next={{ request.get_full_path|urlencode }}"
+                           class="badge bg-light text-dark border text-decoration-none">
+                            {{ b.name }}
+                            {% if b.num_reviews %}· {{ b.num_reviews }} review{{ b.num_reviews|pluralize }}{% endif %}
+                        </a>
+                    {% endfor %}
+                    {% for b in inventory_bottles %}
+                        <span class="badge bg-light text-dark border">
+                            {{ b.name }} <span class="text-muted">({{ b.user.username }}’s)</span>
+                        </span>
+                    {% endfor %}
+                </div>
+            </div>
+        {% else %}
+            <p class="text-muted small mb-0"><i>No bottles reference this distillery yet.</i></p>
+        {% endif %}
     </div>
 
     <!-- APPROVE FORM -->
     <div class="card shadow-sm p-4 mb-4">
-        <h6 class="fw-bold mb-3">Approve as New Distillery</h6>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="fw-bold mb-0">Approve as New Distillery</h6>
+            <button type="button" id="autofillBtn" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-magic"></i> Auto-fill from the web
+            </button>
+        </div>
+
+        <div id="autofillStatus" class="alert alert-info py-2 small" style="display:none;"></div>
 
         <form method="POST">
             {% csrf_token %}
             <input type="hidden" name="action" value="approve">
 
             <div class="mb-3">
+                <label class="form-label">Name</label>
+                <input type="text"
+                       id="nameInput"
+                       name="name"
+                       class="form-control"
+                       autocomplete="off"
+                       value="{{ distillery.name }}">
+                <div class="form-text">You can correct the distillery name before approving.</div>
+            </div>
+
+            <div class="mb-3">
                 <label class="form-label">Country</label>
                 <input type="text"
+                       id="countryInput"
                        name="country"
                        class="form-control"
+                       list="countryOptions"
+                       autocomplete="off"
                        value="{{ distillery.country|default:'' }}">
+                <datalist id="countryOptions">
+                    {% for c in country_suggestions %}
+                        <option value="{{ c }}"></option>
+                    {% endfor %}
+                </datalist>
             </div>
 
             <div class="mb-3">
                 <label class="form-label">Region</label>
                 <input type="text"
+                       id="regionInput"
                        name="region"
                        class="form-control"
+                       list="regionOptions"
+                       autocomplete="off"
                        value="{{ distillery.region|default:'' }}">
+                <datalist id="regionOptions"></datalist>
+                <div id="regionHint" class="form-text" style="display:none;"></div>
             </div>
 
             <div class="mb-3">
                 <label class="form-label">Climate</label>
 
-                <select name="climate" class="form-select">
+                <select id="climateSelect" name="climate" class="form-select">
                     <option value="">— Select climate —</option>
 
                     {% for code,label in CLIMATE_CHOICES %}
@@ -58,11 +111,10 @@
                     {% endfor %}
                 </select>
 
-                {% if suggested_climate and not distillery.climate %}
-                    <div class="form-text text-success">
-                        Suggested climate based on country & region
-                    </div>
-                {% endif %}
+                <div id="climateHint" class="form-text text-success"
+                     style="{% if suggested_climate and not distillery.climate %}{% else %}display:none;{% endif %}">
+                    Suggested climate based on country &amp; region
+                </div>
             </div>
 
 
@@ -96,6 +148,204 @@
         </form>
     </div>
 
+    <!-- REJECT / DELETE -->
+    <div class="card shadow-sm p-4 mt-4 border-danger">
+        <h6 class="fw-bold mb-2 text-danger">Reject &amp; Remove</h6>
+        <p class="text-muted small mb-3">
+            Permanently delete this distillery along with any bottles created for it
+            and their reviews. Use this for junk or test entries. This cannot be undone.
+        </p>
+
+        <button type="button" class="btn btn-outline-danger w-100"
+                data-bs-toggle="modal" data-bs-target="#rejectModal">
+            Delete Distillery
+        </button>
+    </div>
+
 </div>
+
+<!-- Reject Confirmation Modal -->
+<div class="modal fade" id="rejectModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content rounded-4">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold text-danger">Delete distillery?</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-1">
+          Permanently delete <strong>{{ distillery.name }}</strong>, its bottles,
+          and their reviews?
+        </p>
+        {% if canonical_bottles %}
+          <p class="text-muted small mb-0">
+            This affects {{ canonical_bottles|length }} bottle(s). Affected reviewers
+            will be notified. This cannot be undone.
+          </p>
+        {% else %}
+          <p class="text-muted small mb-0">This cannot be undone.</p>
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+          Cancel
+        </button>
+        <form method="POST" class="m-0">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="reject">
+          <button type="submit" class="btn btn-danger">Delete Distillery</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{ region_map|json_script:"regionMapData" }}
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const regionMap = JSON.parse(document.getElementById("regionMapData").textContent);
+    const countryInput = document.getElementById("countryInput");
+    const regionInput  = document.getElementById("regionInput");
+    const regionList   = document.getElementById("regionOptions");
+    const regionHint   = document.getElementById("regionHint");
+    const climateSelect = document.getElementById("climateSelect");
+    const climateHint  = document.getElementById("climateHint");
+    const nameInput    = document.getElementById("nameInput");
+
+    // Don't auto-overwrite values the reviewer edited themselves.
+    let climateUserSet = false;
+    let nameUserSet = false;
+    climateSelect.addEventListener("change", () => { climateUserSet = true; });
+    if (nameInput) nameInput.addEventListener("input", () => { nameUserSet = true; });
+
+    function refreshRegions() {
+        const key = countryInput.value.trim().toLowerCase();
+        const regions = regionMap[key] || [];
+        regionList.innerHTML = "";
+        regions.forEach(r => {
+            const opt = document.createElement("option");
+            opt.value = r;
+            regionList.appendChild(opt);
+        });
+        if (regions.length) {
+            regionHint.textContent = "Known regions: " + regions.join(", ");
+            regionHint.style.display = "block";
+        } else {
+            regionHint.style.display = "none";
+        }
+    }
+
+    async function suggestClimate() {
+        const country = countryInput.value.trim().toLowerCase();
+        const region  = regionInput.value.trim().toLowerCase();
+        if (!country || !region || climateUserSet) return;
+
+        const res = await fetch(
+            `/distilleries/suggest-climate/?country=${encodeURIComponent(country)}&region=${encodeURIComponent(region)}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.climate) return;
+
+        climateSelect.value = data.climate;
+        climateHint.style.display = "block";
+    }
+
+    countryInput.addEventListener("input", () => {
+        refreshRegions();
+        suggestClimate();
+    });
+    regionInput.addEventListener("input", suggestClimate);
+
+    // Populate regions for the pre-filled country on load.
+    refreshRegions();
+
+    // --- Auto-fill from the web ---
+    const autofillBtn = document.getElementById("autofillBtn");
+    const status = document.getElementById("autofillStatus");
+
+    async function runAutofill(isAuto) {
+        status.style.display = "block";
+        status.className = "alert alert-info py-2 small";
+        status.textContent = "Looking up details on the web…";
+        autofillBtn.disabled = true;
+
+        try {
+            const res = await fetch("{% url 'distillery_autofill' distillery.pk %}");
+            const data = await res.json();
+
+            // Fill values, but don't clobber anything the reviewer already typed.
+            function applyDetails(d) {
+                if (d.country && !countryInput.value.trim()) countryInput.value = d.country;
+                refreshRegions();
+                if (d.region && !regionInput.value.trim()) regionInput.value = d.region;
+                if (d.climate && !climateUserSet) {
+                    climateSelect.value = d.climate;
+                    climateHint.style.display = "block";
+                }
+            }
+
+            if (data.found) {
+                applyDetails(data);
+
+                // Offer the canonical/corrected name from the web.
+                let renameNote = "";
+                if (nameInput && data.name && !nameUserSet &&
+                    data.name.toLowerCase() !== nameInput.value.trim().toLowerCase()) {
+                    renameNote = ` Renamed to <strong>${data.name}</strong>.`;
+                    nameInput.value = data.name;
+                }
+
+                const src = data.source_url
+                    ? ` <a href="${data.source_url}" target="_blank" rel="noopener">Source</a>`
+                    : "";
+                const via = data.source === "gemini" ? " (via Gemini)"
+                          : data.source === "wikipedia" ? " (via Wikipedia)" : "";
+                status.className = "alert alert-success py-2 small";
+                status.innerHTML =
+                    "Pre-filled from the web" + via + " — review and adjust as needed." +
+                    renameNote + src +
+                    (data.summary ? `<div class="text-muted mt-1">${data.summary}</div>` : "");
+                return;
+            }
+
+            if (data.suggestion) {
+                const s = data.suggestion;
+                const where = [s.region, s.country].filter(Boolean).join(", ");
+                status.className = "alert alert-warning py-2 small";
+                status.innerHTML =
+                    `“{{ distillery.name }}” may be produced at <strong>${s.name} Distillery</strong>` +
+                    (where ? ` (${where})` : "") + ". " +
+                    (s.source_url ? `<a href="${s.source_url}" target="_blank" rel="noopener">Source</a> ` : "") +
+                    `<button type="button" id="useSuggestionBtn" class="btn btn-sm btn-whiskey ms-2">Use these details</button>`;
+
+                const btn = document.getElementById("useSuggestionBtn");
+                if (btn) btn.addEventListener("click", () => {
+                    applyDetails(s);
+                    status.className = "alert alert-success py-2 small";
+                    status.textContent = `Filled from ${s.name} Distillery — review and adjust as needed.`;
+                });
+                return;
+            }
+
+            status.className = "alert alert-warning py-2 small";
+            status.textContent = "Couldn’t find this distillery online. Please fill the fields manually.";
+        } catch (e) {
+            status.className = "alert alert-warning py-2 small";
+            status.textContent = "Lookup failed. Please fill the fields manually.";
+        } finally {
+            autofillBtn.disabled = false;
+        }
+    }
+
+    autofillBtn.addEventListener("click", () => runAutofill(false));
+
+    // Automatically try once on load when country & region are both empty.
+    if (!countryInput.value.trim() && !regionInput.value.trim()) {
+        runAutofill(true);
+    }
+});
+</script>
 
 {% endblock %}

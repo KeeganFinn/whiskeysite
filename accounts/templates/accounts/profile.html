@@ -3,6 +3,12 @@
 {% block content %}
 
 <div class="col-lg-6 offset-lg-3 mt-4">
+    {% if back_url %}
+        <a href="{{ back_url }}" class="btn btn-outline-secondary btn-sm mb-3">
+            <i class="bi bi-arrow-left"></i> Back to Discover
+        </a>
+    {% endif %}
+
     <div class="card shadow-lg border-0 rounded-4">
         <div class="card-body p-4 text-center">
 
@@ -133,6 +139,109 @@
             {% endif %}
         </div>
     </div>
+
+    <!-- REVIEW HISTORY -->
+    <div class="card shadow-sm mt-4 p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="fw-bold mb-0">Reviews</h5>
+            <span class="text-muted small">{{ reviews|length }} total</span>
+        </div>
+
+        {% if reviews %}
+            <div class="position-relative mb-3">
+                <input type="text"
+                       id="reviewSearchInput"
+                       class="form-control"
+                       autocomplete="off"
+                       placeholder="Search by bottle, distillery, or type...">
+                <div id="reviewSearchSuggestions"
+                     class="list-group position-absolute w-100 shadow-sm"
+                     style="z-index:1050; display:none;"></div>
+            </div>
+
+            <div id="reviewList">
+                {% for r in reviews %}
+                    {% include "accounts/_review_card.html" with r=r hide_reviewer=True %}
+                {% endfor %}
+            </div>
+            <p id="reviewNoMatch" class="text-muted text-center mb-0" style="display:none;">
+                No reviews match your search.
+            </p>
+        {% else %}
+            <p class="text-muted mb-0">No reviews yet.</p>
+        {% endif %}
+    </div>
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const input = document.getElementById("reviewSearchInput");
+    const list = document.getElementById("reviewList");
+    const suggestions = document.getElementById("reviewSearchSuggestions");
+    const noMatch = document.getElementById("reviewNoMatch");
+    if (!input || !list) return;
+
+    const cards = Array.from(list.querySelectorAll(".review-card"));
+
+    function applyFilter(q) {
+        const needle = q.trim().toLowerCase();
+        let visible = 0;
+        cards.forEach(card => {
+            const hay = card.dataset.search || "";
+            const show = !needle || hay.includes(needle);
+            card.style.display = show ? "" : "none";
+            if (show) visible++;
+        });
+        if (noMatch) noMatch.style.display = visible === 0 ? "" : "none";
+    }
+
+    function buildSuggestions(q) {
+        const needle = q.trim().toLowerCase();
+        suggestions.innerHTML = "";
+        if (needle.length < 2) {
+            suggestions.style.display = "none";
+            return;
+        }
+        // Unique bottle names from matching cards.
+        const names = [];
+        cards.forEach(card => {
+            const name = card.querySelector(".fw-semibold");
+            if (!name) return;
+            const text = name.textContent.trim();
+            if (text.toLowerCase().includes(needle) && !names.includes(text)) {
+                names.push(text);
+            }
+        });
+        if (names.length === 0) {
+            suggestions.style.display = "none";
+            return;
+        }
+        names.slice(0, 8).forEach(text => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "list-group-item list-group-item-action";
+            btn.textContent = text;
+            btn.onclick = () => {
+                input.value = text;
+                suggestions.style.display = "none";
+                applyFilter(text);
+            };
+            suggestions.appendChild(btn);
+        });
+        suggestions.style.display = "block";
+    }
+
+    input.addEventListener("input", () => {
+        applyFilter(input.value);
+        buildSuggestions(input.value);
+    });
+
+    document.addEventListener("click", e => {
+        if (!suggestions.contains(e.target) && e.target !== input) {
+            suggestions.style.display = "none";
+        }
+    });
+});
+</script>
 
 {% endblock %}

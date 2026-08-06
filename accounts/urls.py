@@ -26,10 +26,11 @@ urlpatterns = [
 
     # Social features
     path("feed/", views.feed_view, name="feed"),
-    path("post/create/", views.create_post_view, name="create_post"),
+    path("feed/friend-search/", views.feed_friend_search, name="feed_friend_search"),
     path("follow/<int:user_id>/", views.follow_user, name="follow_user"),
     path("unfollow/<int:user_id>/", views.unfollow_user, name="unfollow_user"),
     path("discover/", views.discover_view, name="discover"),
+    path("discover/autocomplete/", views.discover_autocomplete, name="discover_autocomplete"),
 
     # Inventory
     path("inventory/", views.inventory_view, name="inventory"),
@@ -49,9 +50,9 @@ urlpatterns = [
     path("distilleries/add/", views.add_distillery, name="add_distillery"),
     path("distilleries/review/",views.distillery_review_list,name="distillery_review_list"),
     path("distilleries/review/<int:pk>/",views.distillery_review_detail,name="distillery_review_detail"),
+    path("distilleries/review/<int:pk>/autofill/",views.distillery_autofill,name="distillery_autofill"),
     path("distilleries/infer-climate/",views.infer_climate_view,name="infer_climate"),
     path("distilleries/audit/export/",views.export_distillery_audit_csv,name="export_distillery_audit_csv"),
-    path("reviews/bottle/<int:bottle_id>/",views.submit_bottle_review,name="submit_bottle_review"),
     path("bottles/<int:pk>/review/", views.add_review, name="add_review"),
 
     # Bottle Reviews

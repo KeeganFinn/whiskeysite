@@ -14,8 +14,6 @@ from .models import UsernameHistory, DistilleryAuditLog, BottleReview, Canonical
 from django.utils import timezone
 from datetime import timedelta
 from .forms import ChangeUsernameForm
-from .models import Post
-from .forms import PostForm
 from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import get_object_or_404
 from django.contrib.auth.models import User
@@ -26,16 +24,23 @@ from django import forms as djforms
 from django.db.models import Count, Avg, Sum, Q, When, IntegerField, Case
 from django.shortcuts import  redirect
 from django.db.models import F
-from django.http import JsonResponse, HttpResponseForbidden
-from .climate_lookup import suggest_climate, CLIMATE_CHOICES
+from django.http import JsonResponse, HttpResponseForbidden, Http404
+from django_ratelimit.decorators import ratelimit
+from .climate_lookup import suggest_climate, CLIMATE_CHOICES, CLIMATE_LOOKUP
+from .distillery_lookup import lookup_distillery_info
 import csv
 from django.http import HttpResponse
-from django.db import models
+from django.db import models, transaction, IntegrityError
 from .models import WHISKEY_TYPES
 from .canonical import (
     canonical_identity_changed,
     fork_canonical, resolve_canonical,
 )
+from urllib.parse import urlencode
+
+from django.utils.http import url_has_allowed_host_and_scheme
+from . import palate
+from .stats import site_stats
 
 
 
@@ -44,6 +49,32 @@ def normalize_int(value):
         return None
     return int(value)
 
+def parse_score(raw):
+    """Parse a review score (0–10) from raw POST input.
+
+    Raises ValueError on anything that isn't a whole number in range, so callers
+    can reject bad/malicious input instead of 500-ing or storing garbage
+    (``.objects.create`` skips the model's field validators).
+    """
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError("Scores must be whole numbers.")
+    if not 0 <= value <= 10:
+        raise ValueError("Scores must be between 0 and 10.")
+    return value
+
+def csv_safe(value):
+    """Neutralize CSV formula injection for spreadsheet exports.
+
+    A cell beginning with =, +, -, @ (or a leading control char) is treated as a
+    formula by Excel/Sheets. Prefixing with an apostrophe forces it to text.
+    """
+    text = "" if value is None else str(value)
+    if text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
 def parse_local_datetime(value):
     """
     Convert browser datetime-local input to UTC safely.
@@ -51,8 +82,18 @@ def parse_local_datetime(value):
     naive = datetime.strptime(value, "%Y-%m-%dT%H:%M")
     return timezone.make_aware(naive, timezone.get_default_timezone())
 
+@ratelimit(key="ip", rate="5/h", method="POST", block=False)
 def register_view(request):
     if request.method == 'POST':
+        # Throttle account-creation spam per source IP (see decorator above).
+        if getattr(request, "limited", False):
+            messages.error(
+                request,
+                "Too many sign-up attempts from your network. "
+                "Please wait a while and try again.",
+            )
+            return redirect("register")
+
         form = CustomUserCreationForm(request.POST)
         add_bootstrap_classes(form)
         if form.is_valid():
@@ -65,8 +106,17 @@ def register_view(request):
 
     return render(request, 'accounts/register.html', {'form': form})
 
+@ratelimit(key="ip", rate="10/m", method="POST", block=False)
 def login_view(request):
     if request.method == 'POST':
+        # Slow down password brute-forcing per source IP.
+        if getattr(request, "limited", False):
+            messages.error(
+                request,
+                "Too many login attempts. Please wait a minute and try again.",
+            )
+            return redirect("login")
+
         form = AuthenticationForm(request, data=request.POST)
         add_bootstrap_classes(form)
         if form.is_valid():
@@ -177,10 +227,29 @@ def profile_view(request, username=None):
         .first()
     )
 
+    # "Back to Discover" link when arriving from the discover page.
+    back_url = request.GET.get("next")
+    if not (back_url and url_has_allowed_host_and_scheme(
+        back_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    )):
+        back_url = None
+
+    # Reviews written by this user (newest first).
+    reviews = (
+        BottleReview.objects
+        .filter(reviewer=profile_user)
+        .select_related("bottle", "bottle__distillery")
+        .order_by("-created_at")[:200]
+    )
+
     return render(request, "accounts/profile.html", {
         "profile_user": profile_user,
         "profile": profile,
         "history": history,
+        "back_url": back_url,
+        "reviews": reviews,
         "followers_count": followers_count,
         "following_count": following_count,
         "is_following": is_following,
@@ -199,6 +268,7 @@ def profile_view(request, username=None):
         }
     })
 
+@login_required
 def settings_view(request):
     user = request.user
 
@@ -218,6 +288,7 @@ def settings_view(request):
         "blocked_days": blocked_days,
     })
 
+@login_required
 def change_password_view(request):
     if request.method == 'POST':
         form = CustomPasswordChangeForm(user=request.user, data=request.POST)
@@ -234,6 +305,7 @@ def change_password_view(request):
 
 from .forms import EmailChangeForm
 
+@login_required
 def change_email_view(request):
     if request.method == 'POST':
         form = EmailChangeForm(request.POST)
@@ -250,6 +322,7 @@ def change_email_view(request):
     return render(request, "accounts/change_email.html", {"form": form})
 
 
+@login_required
 def profile_settings_view(request):
     profile = request.user.userprofile
 
@@ -267,6 +340,7 @@ def profile_settings_view(request):
     return render(request, "accounts/profile_settings.html", {"form": form})
 
 
+@login_required
 def change_username_view(request):
     user = request.user
 
@@ -304,51 +378,61 @@ def change_username_view(request):
     return render(request, "accounts/change_username.html", {"form": form})
 
 @login_required
-def create_post_view(request):
-    if request.method == "POST":
-        # === Rate Limit: 1 post every 30 seconds ===
-        cooldown = timedelta(seconds=30)
-        last_post = Post.objects.filter(user=request.user).order_by("-created_at").first()
-
-        if last_post and timezone.now() - last_post.created_at < cooldown:
-            remaining = cooldown - (timezone.now() - last_post.created_at)
-            seconds_left = int(remaining.total_seconds())
-            messages.error(request, f"You're posting too fast. Try again in {seconds_left} seconds.")
-            return redirect("/feed/")
-
-        # === Validate form ===
-        form = PostForm(request.POST)
-        if form.is_valid():
-            post = form.save(commit=False)
-            post.user = request.user
-            post.save()
-            messages.success(request, "Your whiskey thoughts have been shared!")
-        else:
-            # Send each validation error as a toast
-            for field_errors in form.errors.values():
-                for error_msg in field_errors:
-                    messages.error(request, error_msg)
-
-        return redirect("/feed/")
-
-    # If someone hits the URL via GET, just send them to the feed
-    return redirect("/feed/")
-
-@login_required
 def feed_view(request):
     # Get all users I follow
-    following_users = request.user.following.values_list("following_id", flat=True)
+    following_ids = list(
+        request.user.following.values_list("following_id", flat=True)
+    )
 
-    # Include my own posts too
-    posts = Post.objects.filter(
-        user__in=list(following_users) + [request.user.id]
-    ).select_related("user").order_by("-created_at")
+    review_qs = (
+        BottleReview.objects
+        .select_related("bottle", "bottle__distillery", "reviewer")
+        .order_by("-created_at")
+    )
 
-    form = PostForm()
+    # Recent reviews by people you follow.
+    friend_reviews = review_qs.filter(reviewer_id__in=following_ids)[:15]
+
+    # Recent reviews by everyone else (not you, not your friends).
+    stranger_reviews = (
+        review_qs
+        .exclude(reviewer_id__in=following_ids)
+        .exclude(reviewer=request.user)[:15]
+    )
+
+    # Optionally scope the stats to one friend's inventory.
+    scoped_user = None
+    friend_username = request.GET.get("friend", "").strip()
+    if friend_username:
+        scoped_user = (
+            User.objects.filter(username=friend_username, id__in=following_ids).first()
+        )
+
     return render(request, "accounts/feed.html", {
-        "posts": posts,
-        "form": form,
+        "friend_reviews": friend_reviews,
+        "stranger_reviews": stranger_reviews,
+        "stats": site_stats(scoped_user),
+        "scoped_user": scoped_user,
+        "friend_query": friend_username,
     })
+
+
+@login_required
+def feed_friend_search(request):
+    """Autocomplete over the people the current user follows."""
+    q = request.GET.get("q", "").strip()
+    if len(q) < 2:
+        return JsonResponse([], safe=False)
+
+    following_ids = request.user.following.values_list("following_id", flat=True)
+    friends = (
+        User.objects.filter(id__in=following_ids, username__icontains=q)
+        .order_by("username")[:10]
+    )
+    return JsonResponse(
+        [{"username": u.username} for u in friends],
+        safe=False,
+    )
 
 @login_required
 def follow_user(request, user_id):
@@ -356,28 +440,119 @@ def follow_user(request, user_id):
     if target != request.user:
         Follow.objects.get_or_create(follower=request.user, following=target)
         messages.success(request, f"You are now following {target.username}.")
-    return redirect(f"/profile/{target.username}/")
+    return _redirect_after_follow(request, target)
 
 @login_required
 def unfollow_user(request, user_id):
     target = get_object_or_404(User, id=user_id)
     Follow.objects.filter(follower=request.user, following=target).delete()
     messages.success(request, f"You unfollowed {target.username}.")
+    return _redirect_after_follow(request, target)
+
+
+def _redirect_after_follow(request, target):
+    """Return to the page the follow came from when given a safe ?next=."""
+    next_url = request.GET.get("next")
+    if next_url and url_has_allowed_host_and_scheme(
+        next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return redirect(next_url)
     return redirect(f"/profile/{target.username}/")
 
 @login_required
-def discover_view(request):
-    # Everyone except yourself
-    users = User.objects.exclude(id=request.user.id).select_related("userprofile")
+def discover_autocomplete(request):
+    q = request.GET.get("q", "").strip()
+    if len(q) < 2:
+        return JsonResponse([], safe=False)
 
-    # Mark which ones you're already following
+    following_ids = set(
+        Follow.objects.filter(follower=request.user)
+        .values_list("following_id", flat=True)
+    )
+
+    users = (
+        User.objects.exclude(id=request.user.id)
+        .filter(username__icontains=q)
+        .order_by("username")[:10]
+    )
+
+    return JsonResponse(
+        [
+            {
+                "username": u.username,
+                "is_following": u.id in following_ids,
+            }
+            for u in users
+        ],
+        safe=False,
+    )
+
+
+@login_required
+def discover_view(request):
+    q = request.GET.get("q", "").strip()
+    match = request.GET.get("match", "")  # "", "similar", or "different"
+
+    # Everyone except yourself, optionally filtered by the search bar.
+    users = User.objects.exclude(id=request.user.id).select_related("userprofile")
+    if q:
+        users = users.filter(username__icontains=q)
+
     following_ids = set(
         Follow.objects.filter(follower=request.user).values_list("following_id", flat=True)
     )
 
+    type_labels = dict(WHISKEY_TYPES)
+
+    # --- Style signatures: review counts per whiskey type, per reviewer ---
+    style_counts = {}  # reviewer_id -> {whiskey_type: count}
+    for row in (
+        BottleReview.objects
+        .values("reviewer_id", "bottle__whiskey_type")
+        .annotate(c=Count("id"))
+    ):
+        wtype = row["bottle__whiskey_type"]
+        style_counts.setdefault(row["reviewer_id"], {})[wtype] = row["c"]
+
+    my_vec = style_counts.get(request.user.id, {})
+
+    users = list(users)
+    for u in users:
+        vec = style_counts.get(u.id, {})
+        u.review_count = sum(vec.values())
+
+        # Per-type breakdown, most-reviewed first.
+        u.type_breakdown = [
+            {"label": type_labels.get(t, t), "count": c}
+            for t, c in sorted(vec.items(), key=lambda kv: kv[1], reverse=True)
+        ]
+        # Dominant style label (what we "tag" the person as).
+        u.style_label = u.type_breakdown[0]["label"] if u.type_breakdown else None
+
+        if my_vec and vec:
+            sim = palate.cosine(my_vec, vec)
+            u.style_match = palate.match_percent(sim)
+            u._sim = sim
+        else:
+            u.style_match = None
+            u._sim = None
+
+    # --- Recommendation ordering by style similarity ---
+    if match in ("similar", "different") and my_vec:
+        rated = [u for u in users if u._sim is not None]
+        unrated = [u for u in users if u._sim is None]
+        # similar = highest cosine first; different = lowest first
+        rated.sort(key=lambda u: u._sim, reverse=(match == "similar"))
+        users = rated + unrated
+
     return render(request, "accounts/discover.html", {
         "users": users,
-        "following_ids": following_ids
+        "following_ids": following_ids,
+        "q": q,
+        "match": match,
+        "has_palate": bool(my_vec),
     })
 
 @login_required
@@ -591,16 +766,16 @@ def inventory_export_csv(request):
 
     for b in qs:
         writer.writerow([
-            b.name,
-            b.distillery.name if b.distillery else "",
+            csv_safe(b.name),
+            csv_safe(b.distillery.name if b.distillery else ""),
             b.get_whiskey_type_display(),
             b.age if b.age is not None else "",
             b.proof if b.proof is not None else "",
             b.price if b.price is not None else "",
             b.get_status_display(),
             "Yes" if b.is_store_pick else "No",
-            b.store_name or "",
-            (b.pick_details or "").replace("\n", " ").strip(),
+            csv_safe(b.store_name or ""),
+            csv_safe((b.pick_details or "").replace("\n", " ").strip()),
             b.created_at.strftime("%Y-%m-%d %H:%M:%S"),
         ])
 
@@ -638,16 +813,16 @@ def inventory_export(request):
 
     for b in qs.order_by("-created_at"):
         writer.writerow([
-            b.name,
-            b.distillery.name if b.distillery else "",
+            csv_safe(b.name),
+            csv_safe(b.distillery.name if b.distillery else ""),
             b.get_whiskey_type_display(),
             b.age or "",
             b.proof or "",
             b.price or "",
             b.get_status_display(),
             "Yes" if b.is_store_pick else "No",
-            b.store_name or "",
-            (b.pick_details or "").replace("\n", " ").strip(),
+            csv_safe(b.store_name or ""),
+            csv_safe((b.pick_details or "").replace("\n", " ").strip()),
             b.created_at.strftime("%Y-%m-%d %H:%M:%S"),
         ])
 
@@ -928,9 +1103,17 @@ def add_distillery(request):
             "Distillery already exists."
         )
 
+        # Only redirect back to a same-site URL to avoid an open redirect.
         return_to = request.POST.get("return_to")
-        if return_to:
-            return redirect(return_to)
+        if return_to and url_has_allowed_host_and_scheme(
+            return_to,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            # Append new_distillery to querystring
+            separator = "&" if "?" in return_to else "?"
+            query = urlencode({"new_distillery": name})
+            return redirect(f"{return_to}{separator}{query}")
 
         return redirect("inventory")
 
@@ -957,16 +1140,33 @@ def distillery_review_detail(request, pk):
         action = request.POST.get("action")
 
         if action == "approve":
+            new_name = (request.POST.get("name") or "").strip()
+            old_name = distillery.name
+            if new_name:
+                distillery.name = new_name
             distillery.country = request.POST.get("country")
             distillery.region = request.POST.get("region")
             distillery.climate = request.POST.get("climate")
             distillery.is_verified = True
-            distillery.save()
+            try:
+                with transaction.atomic():
+                    distillery.save()
+            except IntegrityError:
+                messages.error(
+                    request,
+                    f"A distillery named “{new_name}” already exists. "
+                    "Consider marking this one as a duplicate instead.",
+                )
+                return redirect("distillery_review_detail", pk=distillery.pk)
+
+            rename_note = (
+                f" Renamed from “{old_name}”." if new_name and new_name != old_name else ""
+            )
             DistilleryAuditLog.objects.create(
                 distillery=distillery,
                 action="approved",
                 performed_by=request.user,
-                notes = "Approved via review screen"
+                notes="Approved via review screen." + rename_note,
             )
 
         elif action == "duplicate":
@@ -986,7 +1186,80 @@ def distillery_review_detail(request, pk):
                 performed_by=request.user,
                 notes=f"Duplicate of {canonical.name}"
             )
+
+        elif action == "reject":
+            # Junk distillery: remove it along with the canonical bottles created
+            # for it and any reviews on those bottles (reviews cascade with the
+            # canonical bottle). Inventory bottles keep their data but lose the
+            # distillery/canonical link (SET_NULL).
+            name = distillery.name
+            canonicals = CanonicalBottle.objects.filter(distillery=distillery)
+            reviews = BottleReview.objects.filter(bottle__in=canonicals)
+
+            # Capture affected reviewers before the reviews are deleted, so we
+            # can notify them their review was removed for bad data.
+            affected_reviewer_ids = set(
+                reviews.values_list("reviewer_id", flat=True)
+            )
+            review_count = reviews.count()
+            canonical_count = canonicals.count()
+
+            canonicals.delete()  # cascades to their reviews
+            distillery.delete()
+
+            notify_link = f"{reverse('review_search')}?removed_distillery={pk}"
+            for reviewer_id in affected_reviewer_ids:
+                Notification.objects.get_or_create(
+                    user_id=reviewer_id,
+                    link=notify_link,
+                    defaults={
+                        "message": (
+                            f"A review of yours was removed because the distillery "
+                            f"“{name}” was deleted for bad data."
+                        )
+                    },
+                )
+
+            messages.success(
+                request,
+                f"Removed “{name}” along with {canonical_count} bottle(s) "
+                f"and {review_count} review(s). "
+                f"Notified {len(affected_reviewer_ids)} reviewer(s).",
+            )
+
         return redirect("distillery_review_list")
+
+    # Build country + region suggestions from the climate lookup table and
+    # any countries/regions already recorded on verified distilleries.
+    countries = set()
+    region_map = {}  # lowercase country -> set of region display names
+    for c, regions in CLIMATE_LOOKUP.items():
+        countries.add(c)
+        region_map.setdefault(c, set()).update(
+            r.title() for r in regions if r != "all"
+        )
+    for d in Distillery.objects.filter(is_verified=True).exclude(country__isnull=True):
+        cl = (d.country or "").strip().lower()
+        if not cl:
+            continue
+        countries.add(cl)
+        if d.region:
+            region_map.setdefault(cl, set()).add(d.region.strip().title())
+
+    country_suggestions = sorted(c.title() for c in countries)
+    region_map = {c: sorted(v) for c, v in region_map.items()}
+
+    # Bottles that reference this distillery — context for the reviewer.
+    canonical_bottles = (
+        CanonicalBottle.objects.filter(distillery=distillery)
+        .annotate(num_reviews=Count("reviews"))
+        .order_by("name")
+    )
+    inventory_bottles = (
+        Bottle.objects.filter(distillery=distillery)
+        .select_related("user")
+        .order_by("name")
+    )
 
     return render(request, "accounts/review_detail.html", {
         "distillery": distillery,
@@ -994,7 +1267,19 @@ def distillery_review_detail(request, pk):
         "suggested_climate": suggested_climate,
         "CLIMATE_CHOICES": CLIMATE_CHOICES,
         "audit_logs": distillery.audit_logs.all(),
+        "country_suggestions": country_suggestions,
+        "region_map": region_map,
+        "canonical_bottles": canonical_bottles,
+        "inventory_bottles": inventory_bottles,
     })
+
+
+@login_required
+@permission_required("accounts.can_review_distillery")
+def distillery_autofill(request, pk):
+    """Look up a distillery's details from the web for the review screen."""
+    distillery = get_object_or_404(Distillery, pk=pk)
+    return JsonResponse(lookup_distillery_info(distillery.name))
 
 
 @login_required
@@ -1012,6 +1297,7 @@ def distillery_review_list(request):
 @login_required
 def canonical_add_and_review(request):
     prefill_name = request.GET.get("name", "").strip()
+    prefill_distillery = request.GET.get("new_distillery", "").strip()
 
     if request.method == "POST":
         name = request.POST.get("name", "").strip()
@@ -1059,6 +1345,7 @@ def canonical_add_and_review(request):
         "accounts/canonical_add_and_review.html",
         {
             "prefill_name": prefill_name,
+            "prefill_distillery": prefill_distillery,
             "WHISKEY_TYPES": WHISKEY_TYPES,
             "CLIMATE_CHOICES": CLIMATE_CHOICES,
         },
@@ -1100,38 +1387,14 @@ def export_distillery_audit_csv(request):
 
     for log in logs:
         writer.writerow([
-            log.distillery.name,
+            csv_safe(log.distillery.name),
             log.get_action_display(),
-            log.performed_by.username if log.performed_by else "System",
-            log.notes,
+            csv_safe(log.performed_by.username if log.performed_by else "System"),
+            csv_safe(log.notes),
             log.created_at.strftime("%Y-%m-%d %H:%M:%S"),
         ])
 
     return response
-
-@login_required
-def submit_bottle_review(request, bottle_id):
-    bottle = get_object_or_404(Bottle, pk=bottle_id)
-
-    review, created = BottleReview.objects.get_or_create(
-        bottle=bottle,
-        reviewer=request.user
-    )
-
-    if request.method == "POST":
-        form = BottleReviewForm(request.POST, instance=review)
-        if form.is_valid():
-            form.save()
-            messages.success(request, "Review saved!")
-            return redirect("inventory")
-    else:
-        form = BottleReviewForm(instance=review)
-
-    return render(request, "accounts/reviews/review_modal.html", {
-        "form": form,
-        "bottle": bottle,
-        "review": review,
-    })
 
 @login_required
 def add_review(request, pk):
@@ -1156,14 +1419,23 @@ def add_review(request, pk):
             canonical = inventory_bottle.canonical_bottle
 
         # 2) Create review linked to canonical
+        try:
+            nose = parse_score(request.POST.get("nose"))
+            taste = parse_score(request.POST.get("taste"))
+            finish = parse_score(request.POST.get("finish"))
+            value = parse_score(request.POST.get("value"))
+        except ValueError:
+            messages.error(request, "Please provide valid scores (0–10).")
+            return redirect("inventory")
+
         BottleReview.objects.create(
             bottle=canonical,
             reviewer=request.user,
-            nose=int(request.POST["nose"]),
-            taste=int(request.POST["taste"]),
-            finish=int(request.POST["finish"]),
-            value=int(request.POST["value"]),
-            notes=request.POST.get("notes", ""),
+            nose=nose,
+            taste=taste,
+            finish=finish,
+            value=value,
+            notes=request.POST.get("notes", "")[:1000],
         )
 
         return redirect(f"{reverse('canonical_bottle_detail', args=[inventory_bottle.canonical_bottle.id])}?from={source}")
@@ -1191,6 +1463,15 @@ def canonical_bottle_detail(request, pk):
 
     source = request.GET.get("from", "review_search")
 
+    # Optional explicit "go back where I came from" link.
+    back_url = request.GET.get("next")
+    if not (back_url and url_has_allowed_host_and_scheme(
+        back_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    )):
+        back_url = None
+
     return render(
         request,
         "accounts/canonical_bottle_detail.html",
@@ -1201,6 +1482,7 @@ def canonical_bottle_detail(request, pk):
             "review_count": agg["review_count"] or 0,
             "show": show,
             "source": source,
+            "back_url": back_url,
         },
     )
 
@@ -1239,13 +1521,22 @@ def add_canonical_review(request, pk):
     source = request.POST.get("source") or request.GET.get("source") or "review_search"
 
     if request.method == "POST":
+        try:
+            nose = parse_score(request.POST.get("nose"))
+            taste = parse_score(request.POST.get("taste"))
+            finish = parse_score(request.POST.get("finish"))
+            value = parse_score(request.POST.get("value"))
+        except ValueError:
+            messages.error(request, "Please provide valid scores (0–10).")
+            return redirect("add_canonical_review", pk=canonical.id)
+
         BottleReview.objects.create(
             bottle=canonical,
             reviewer=request.user,
-            nose=int(request.POST["nose"]),
-            taste=int(request.POST["taste"]),
-            finish=int(request.POST["finish"]),
-            value=int(request.POST["value"]),
+            nose=nose,
+            taste=taste,
+            finish=finish,
+            value=value,
             notes=request.POST.get("notes", "")[:1000],  # HARD CAP
         )
 
@@ -1349,10 +1640,14 @@ def add_event_review(request, event_id, event_bottle_id):
             )
 
         # Assign fields EXPLICITLY
-        review.nose = int(request.POST["nose"])
-        review.taste = int(request.POST["taste"])
-        review.finish = int(request.POST["finish"])
-        review.value = int(request.POST["value"])
+        try:
+            review.nose = parse_score(request.POST.get("nose"))
+            review.taste = parse_score(request.POST.get("taste"))
+            review.finish = parse_score(request.POST.get("finish"))
+            review.value = parse_score(request.POST.get("value"))
+        except ValueError:
+            messages.error(request, "Please provide valid scores (0–10).")
+            return redirect("event_detail", event.id)
         review.notes = request.POST.get("notes", "")[:1000]
 
         review.save()
@@ -1371,34 +1666,65 @@ def add_event_review(request, event_id, event_bottle_id):
     )
 
 
+EVENTS_LIST_LIMIT = 25
+
+
 @login_required
 def events_list(request):
     now = timezone.now()
 
-    # Events the user can see
-    visible_events = Event.objects.filter(
-        Q(visibility="public") |
-        Q(visibility="friends", participants__user=request.user) |
-        Q(owner=request.user)
-    ).distinct()
-
-    # Split into buckets
-    upcoming_events = visible_events.filter(start_time__gt=now)
-
-    active_events = visible_events.filter(
-        start_time__lte=now,
-        end_time__gte=now,
+    # Whether the current user has been added to (is a participant of) the event.
+    is_participant = models.Exists(
+        EventParticipant.objects.filter(
+            event=models.OuterRef("pk"),
+            user=request.user,
+        )
     )
 
-    past_events = visible_events.filter(end_time__lt=now)
+    # Events the user can see, annotated so added-to events can float to the top.
+    visible_events = (
+        Event.objects.filter(
+            Q(visibility="public") |
+            Q(visibility="friends", participants__user=request.user) |
+            Q(owner=request.user)
+        )
+        .distinct()
+        .annotate(is_participant=is_participant)
+    )
+
+    # Split into buckets. Within Active/Upcoming, events the user was added to
+    # come first; then cap the whole page at EVENTS_LIST_LIMIT events.
+    active_events = list(
+        visible_events.filter(
+            start_time__lte=now,
+            end_time__gte=now,
+        ).order_by("-is_participant", "end_time")
+    )
+
+    upcoming_events = list(
+        visible_events.filter(start_time__gt=now)
+        .order_by("-is_participant", "start_time")
+    )
+
+    past_events = list(
+        visible_events.filter(end_time__lt=now).order_by("-end_time")
+    )
+
+    # Cap at 25 total, filling Active → Upcoming → Past in that order.
+    remaining = EVENTS_LIST_LIMIT
+    active_events = active_events[:remaining]
+    remaining -= len(active_events)
+    upcoming_events = upcoming_events[:remaining]
+    remaining -= len(upcoming_events)
+    past_events = past_events[:remaining]
 
     return render(
         request,
         "accounts/events_list.html",
         {
-            "upcoming_events": upcoming_events.order_by("start_time"),
-            "active_events": active_events.order_by("end_time"),
-            "past_events": past_events.order_by("-end_time"),
+            "upcoming_events": upcoming_events,
+            "active_events": active_events,
+            "past_events": past_events,
         },
     )
 
@@ -1411,6 +1737,11 @@ def event_detail(request, pk):
         is_owner or
         EventParticipant.objects.filter(event=event, user=request.user).exists()
     )
+
+    # Access control: "Friends Only" events are visible only to the owner and
+    # invited participants. 404 (not 403) so we don't confirm the event exists.
+    if event.visibility != "public" and not is_attendee:
+        raise Http404("Event not found.")
 
     show_location = (not event.is_past) or is_attendee
 
@@ -1496,9 +1827,7 @@ def event_detail(request, pk):
     )
 
     for r in all_reviews:
-        # final_score is weighted /100 → display /10 for events
-        r.overall_10 = (r.final_score / 10.0) if r.final_score is not None else None
-
+        # overall_10 is now a model property (final_score / 10).
         all_reviews_by_event_bottle.setdefault(
             r.event_bottle_id, []
         ).append(r)
@@ -1780,6 +2109,10 @@ def event_add_bottle(request, pk):
 def event_add_participant(request, pk):
     event = get_object_or_404(Event, pk=pk, owner=request.user)
 
+    if event.is_past:
+        messages.error(request, "This event has ended. You can no longer add participants.")
+        return redirect("event_detail", pk=event.id)
+
     if request.method == "POST":
         username = request.POST.get("username")
 
@@ -1809,7 +2142,11 @@ def event_remove_participant(request, pk, user_id):
 
 @login_required
 def event_user_search(request, pk):
-    event = get_object_or_404(Event, pk=pk)
+    # Only the owner adds participants, so only the owner may search users.
+    event = get_object_or_404(Event, pk=pk, owner=request.user)
+
+    if event.is_past:
+        return JsonResponse([], safe=False)
 
     q = request.GET.get("q", "").strip()
     if not q:

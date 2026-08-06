@@ -10,22 +10,51 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# --- Distillery web lookup ---
+# Optional Gemini API fallback for the distillery review screen. When
+# GEMINI_API_KEY is unset, lookups use Wikipedia only.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-7o06+2(a)*u+%)6i(%_66_*rstbf%%zrbf3=a43%no==bsv0#i'
+# In production, set DJANGO_SECRET_KEY in the environment. The fallback below is
+# for LOCAL DEVELOPMENT ONLY and must never be used on a public server (the old
+# committed value is considered compromised and has to be rotated).
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY",
+    "django-insecure-dev-only-do-not-use-in-production-change-me",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Defaults to True for local dev; set DJANGO_DEBUG=False in production.
+DEBUG = os.environ.get("DJANGO_DEBUG", "True").strip().lower() != "false"
 
-ALLOWED_HOSTS = []
+# Hosts/domains this site may serve. In production set DJANGO_ALLOWED_HOSTS to a
+# comma-separated list, e.g. "example.com,www.example.com".
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if h.strip()
+]
+
+# Origins trusted for CSRF over HTTPS (required by Django 4+ for cross-origin
+# POSTs). In production set DJANGO_CSRF_TRUSTED_ORIGINS, e.g.
+# "https://example.com,https://www.example.com".
+CSRF_TRUSTED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
+    if o.strip()
+]
 
 
 # Application definition
@@ -122,3 +151,46 @@ STATIC_URL = 'static/'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+
+# --- Security hardening --------------------------------------------------
+# Applied to every environment. The HTTPS-specific settings only switch on when
+# DEBUG is off (i.e. in production) so local http://localhost dev keeps working.
+
+# Clickjacking: never allow the site to be framed by other origins.
+X_FRAME_OPTIONS = "DENY"
+
+# Cap request bodies / uploads to reduce abuse (avatars are validated separately
+# in the profile form). 5 MB is generous for this app.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024   # 5 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024   # 5 MB
+
+# Cache backend. Required by django-ratelimit. The default per-process
+# LocMemCache is fine for a single-process deployment; switch to Redis/Memcached
+# if you run multiple workers so the rate-limit counters are shared.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "whiskey-app",
+    }
+}
+
+if not DEBUG:
+    # Assume the site sits behind an HTTPS-terminating proxy that forwards the
+    # scheme in X-Forwarded-Proto (true for most PaaS hosts / nginx setups).
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = True
+
+    # Cookies only over HTTPS, and not readable from JavaScript.
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+
+    # HTTP Strict Transport Security: tell browsers to stick to HTTPS.
+    SECURE_HSTS_SECONDS = 31536000          # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+
+    # Extra hardening headers.
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"

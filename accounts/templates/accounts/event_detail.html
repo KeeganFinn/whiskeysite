@@ -23,15 +23,6 @@
 
         <div class="d-flex gap-2 align-items-center">
 
-          {% if is_owner %}
-            <button class="btn btn-outline-secondary btn-sm"
-                    id="participantViewToggle"
-                    data-mode="owner"
-                    onclick="toggleParticipantView()">
-              Participant View
-            </button>
-          {% endif %}
-
           {% if is_owner and not event.is_past %}
             <a href="{% url 'event_edit' event.id %}"
                class="btn btn-outline-secondary btn-sm owner-only">
@@ -121,6 +112,17 @@
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
           <h5 class="fw-bold mb-0">Bottles</h5>
 
+          {% if is_owner and not event.is_past %}
+            <div class="form-check form-switch ms-auto me-2 owner-only">
+              <input class="form-check-input" type="checkbox"
+                     id="addBottleToggle" checked
+                     onchange="toggleAddBottle(this.checked)">
+              <label class="form-check-label small" for="addBottleToggle">
+                Show Add Bottle
+              </label>
+            </div>
+          {% endif %}
+
           <div class="btn-group btn-group-sm">
             <button class="btn btn-outline-secondary"
                     type="button"
@@ -147,7 +149,7 @@
         </div>
 
        {% if is_owner and not event.is_past %}
-        <div class="card shadow-sm p-3 mb-4 owner-only">
+        <div class="card shadow-sm p-3 mb-4 owner-only" id="addBottleCard">
           <h5 class="fw-bold mb-3">Add Bottle to Event</h5>
 
           <form method="post" action="{% url 'event_add_bottle' event.id %}"  id="eventBottleForm">
@@ -386,17 +388,26 @@
 
         <h5 class="fw-bold mb-3">Participants</h5>
 
-        {% if is_owner %}
+        {% if is_owner and not event.is_past %}
           <form method="post"
                 action="{% url 'event_add_participant' event.id %}"
-                class="input-group mb-3 owner-only">
+                class="mb-3 owner-only position-relative">
             {% csrf_token %}
-            <input class="form-control"
-                   name="username"
-                   placeholder="Add user by username"
-                   required>
-            <button class="btn btn-whiskey">Add</button>
+            <div class="input-group">
+              <input class="form-control"
+                     id="participantInput"
+                     name="username"
+                     placeholder="Add user by username"
+                     autocomplete="off"
+                     required>
+              <button class="btn btn-whiskey">Add</button>
+            </div>
+            <div id="participantSuggestions"
+                 class="list-group position-absolute w-100 shadow-sm"
+                 style="z-index:1050; display:none;"></div>
           </form>
+        {% elif is_owner and event.is_past %}
+          <p class="text-muted owner-only">This event has ended — participants can no longer be added.</p>
         {% endif %}
 
         {% if event.participants.all %}
@@ -614,7 +625,68 @@ document.addEventListener("DOMContentLoaded", function () {
             suggestions.style.display = "none";
         }
     });
+
+    setupParticipantAutocomplete();
 });
+
+function setupParticipantAutocomplete() {
+    const input = document.getElementById("participantInput");
+    const suggestions = document.getElementById("participantSuggestions");
+
+    if (!input || !suggestions) return;
+
+    input.addEventListener("input", async () => {
+        const q = input.value.trim();
+
+        if (q.length < 2) {
+            suggestions.style.display = "none";
+            return;
+        }
+
+        const res = await fetch(`{% url 'event_user_search' event.id %}?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+
+        suggestions.innerHTML = "";
+
+        if (data.length === 0) {
+            const empty = document.createElement("div");
+            empty.className = "list-group-item text-muted small";
+            empty.textContent = "No matching users.";
+            suggestions.appendChild(empty);
+        } else {
+            data.forEach(u => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "list-group-item list-group-item-action d-flex justify-content-between align-items-center";
+
+                const name = document.createElement("span");
+                name.textContent = u.username;
+                btn.appendChild(name);
+
+                if (u.is_following) {
+                    const tag = document.createElement("span");
+                    tag.className = "badge bg-whiskey";
+                    tag.textContent = "Following";
+                    btn.appendChild(tag);
+                }
+
+                btn.onclick = () => {
+                    input.value = u.username;
+                    suggestions.style.display = "none";
+                };
+                suggestions.appendChild(btn);
+            });
+        }
+
+        suggestions.style.display = "block";
+    });
+
+    document.addEventListener("click", e => {
+        if (!suggestions.contains(e.target) && e.target !== input) {
+            suggestions.style.display = "none";
+        }
+    });
+}
 
 function bindClimateSuggestion(modal) {
     const countryInput  = modal.querySelector('input[name="country"]');
@@ -657,6 +729,22 @@ function bindClimateSuggestion(modal) {
     countryInput.addEventListener("input", suggest);
     regionInput.addEventListener("input", suggest);
 }
+
+function toggleAddBottle(show) {
+  const card = document.getElementById("addBottleCard");
+  if (card) card.style.display = show ? "" : "none";
+  localStorage.setItem("eventAddBottleHidden:{{ event.id }}", show ? "0" : "1");
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  const toggle = document.getElementById("addBottleToggle");
+  if (!toggle) return;
+  const hidden = localStorage.getItem("eventAddBottleHidden:{{ event.id }}") === "1";
+  if (hidden) {
+    toggle.checked = false;
+    toggleAddBottle(false);
+  }
+});
 
 function toggleAll(selector, show) {
   document.querySelectorAll(selector).forEach(el => {
@@ -710,27 +798,6 @@ function toggleLeaderboard(mode) {
   document
     .querySelector(`.btn-group .btn[data-mode="${mode}"]`)
     ?.classList.add('active');
-}
-
-function toggleParticipantView() {
-  const btn = document.getElementById('participantViewToggle');
-  const isOwnerView = btn.dataset.mode === 'owner';
-
-  document.querySelectorAll('.owner-only').forEach(el => {
-    el.style.display = isOwnerView ? 'none' : '';
-  });
-
-  if (isOwnerView) {
-    btn.dataset.mode = 'participant';
-    btn.textContent = 'Owner View';
-    btn.classList.remove('btn-outline-secondary');
-    btn.classList.add('btn-outline-warning');
-  } else {
-    btn.dataset.mode = 'owner';
-    btn.textContent = 'Participant View';
-    btn.classList.remove('btn-outline-warning');
-    btn.classList.add('btn-outline-secondary');
-  }
 }
 </script>
 

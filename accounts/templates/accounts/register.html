@@ -10,6 +10,12 @@
             <form method="POST">
                 {% csrf_token %}
 
+                {# Honeypot: hidden from humans, tempting to bots. Do not remove. #}
+                <div aria-hidden="true" style="position:absolute; left:-9999px; top:-9999px; height:0; width:0; overflow:hidden;">
+                    <label>Leave this field blank</label>
+                    {{ form.website }}
+                </div>
+
                 <div class="mb-3">
                     <label class="form-label">Email</label>
                     {{ form.email }}

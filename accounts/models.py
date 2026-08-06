@@ -57,14 +57,6 @@ class UsernameHistory(models.Model):
     def __str__(self):
         return f"{self.old_username} -> {self.user.username}"
 
-class Post(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="posts")
-    content = models.TextField(max_length=5000)
-    created_at = models.DateTimeField(default=timezone.now)
-
-    def __str__(self):
-        return f"{self.user.username}: {self.content[:30]}"
-
 class Follow(models.Model):
     follower = models.ForeignKey(User, on_delete=models.CASCADE, related_name="following")
     following = models.ForeignKey(User, on_delete=models.CASCADE, related_name="followers")
@@ -280,6 +272,13 @@ class BottleReview(models.Model):
         )
 
         super().save(*args, **kwargs)
+
+    @property
+    def overall_10(self):
+        """Weighted score (stored /100) expressed on a /10 scale."""
+        if self.final_score is None:
+            return None
+        return self.final_score / 10.0
 
     def __str__(self):
         score = f"{self.final_score:.1f}" if self.final_score is not None else "—"

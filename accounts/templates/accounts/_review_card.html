@@ -1,0 +1,29 @@
+<div class="card shadow-sm mb-2 review-card"
+     data-search="{{ r.reviewer.username|lower }} {{ r.bottle.name|lower }} {{ r.bottle.distillery.name|default:''|lower }} {{ r.bottle.get_whiskey_type_display|lower }}">
+    <div class="card-body py-2">
+        <div class="d-flex justify-content-between align-items-start">
+            <div>
+                {% if not hide_reviewer %}
+                    <a href="/profile/{{ r.reviewer.username }}/" class="fw-bold text-dark text-decoration-none username-link">
+                        {{ r.reviewer.username }}
+                    </a>
+                    <span class="text-muted">reviewed</span>
+                {% endif %}
+                <a href="{% url 'canonical_bottle_detail' r.bottle.id %}" class="text-decoration-none fw-semibold">
+                    {{ r.bottle.name }}
+                </a>
+                <div class="text-muted small">
+                    {{ r.bottle.get_whiskey_type_display }}
+                    {% if r.bottle.distillery %} • {{ r.bottle.distillery.name }}{% endif %}
+                    • {{ r.created_at|date:"M j, Y" }}
+                </div>
+            </div>
+            {% if r.overall_10 is not None %}
+                <span class="badge bg-whiskey fs-6">{{ r.overall_10|floatformat:1 }}/10</span>
+            {% endif %}
+        </div>
+        {% if r.notes %}
+            <div class="small mt-1">{{ r.notes|truncatechars:160 }}</div>
+        {% endif %}
+    </div>
+</div>

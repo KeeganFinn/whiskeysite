@@ -4,7 +4,6 @@ from django.contrib.auth.models import User
 from django.contrib.auth.forms import PasswordChangeForm
 from django import forms
 from .models import UserProfile, BottleReview
-from .models import Post
 from .models import Bottle
 from .climate_lookup import CLIMATE_CHOICES, suggest_climate
 from .models import Distillery
@@ -13,9 +12,26 @@ from django import forms as djforms
 class CustomUserCreationForm(UserCreationForm):
     email = forms.EmailField(required=True, label="Email")
 
+    # Honeypot: hidden from real users via CSS/aria in the template. Bots that
+    # auto-fill every field will populate it, and we reject those submissions.
+    website = forms.CharField(
+        required=False,
+        label="",
+        widget=forms.TextInput(attrs={
+            "autocomplete": "off",
+            "tabindex": "-1",
+        }),
+    )
+
     class Meta:
         model = User
         fields = ("email", "username", "password1", "password2")
+
+    def clean_website(self):
+        if self.cleaned_data.get("website"):
+            # Don't reveal the honeypot; a generic error is enough.
+            raise forms.ValidationError("Registration could not be completed.")
+        return ""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -83,6 +99,14 @@ class ProfileUpdateForm(forms.ModelForm):
         # Just in case Django adds anything, kill help text
         self.fields["avatar"].help_text = None
 
+    def clean_avatar(self):
+        avatar = self.cleaned_data.get("avatar")
+        # Only newly uploaded files carry a .size; existing paths won't.
+        max_bytes = 5 * 1024 * 1024  # 5 MB
+        if avatar and hasattr(avatar, "size") and avatar.size > max_bytes:
+            raise forms.ValidationError("Image is too large (5 MB maximum).")
+        return avatar
+
 class ChangeUsernameForm(forms.Form):
     new_username = forms.CharField(
         max_length=20,
@@ -98,29 +122,6 @@ class ChangeUsernameForm(forms.Form):
             raise forms.ValidationError("That username is already taken.")
 
         return username
-
-class PostForm(forms.ModelForm):
-    class Meta:
-        model = Post
-        fields = ["content"]
-        widgets = {
-            "content": forms.Textarea(attrs={
-                "class": "form-control",
-                "rows": 5,
-                "placeholder": "Whiskey thoughts?"
-            })
-        }
-
-    def clean_content(self):
-        content = self.cleaned_data["content"]
-
-        if len(content) < 5:
-            raise forms.ValidationError("Your post is too short.")
-
-        if len(content) > 5000:
-            raise forms.ValidationError("Your post is too long.")
-
-        return content
 
 class BottleForm(forms.ModelForm):
     # Free-text field that we control manually

@@ -29,7 +29,8 @@
                name="distillery_name"
                class="form-control"
                autocomplete="off"
-               placeholder="Start typing…">
+               placeholder="Start typing…"
+                value="{{ prefill_distillery }}">
 
         <div id="distillerySuggestions"
              class="list-group position-absolute w-100 shadow-sm"
@@ -80,7 +81,54 @@
   </div>
 </div>
 
-{% include "accounts/partials/add_distillery_modal.html" %}
+<!-- Add Distillery Modal -->
+<div class="modal fade" id="addDistilleryModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content rounded-4">
+
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold">Add Distillery</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <form method="POST" action="{% url 'add_distillery' %}">
+        {% csrf_token %}
+
+        <input type="hidden" name="return_to" value="{{ request.get_full_path }}">
+
+        <div class="modal-body">
+
+          <div class="mb-3">
+            <label class="form-label">Distillery Name *</label>
+            <input type="text"
+                   name="name"
+                   id="newDistilleryName"
+                   class="form-control"
+                   required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Country</label>
+            <input type="text"
+                   name="country"
+                   class="form-control">
+          </div>
+
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-whiskey w-100" type="submit">
+            Submit for Approval
+          </button>
+        </div>
+
+      </form>
+
+    </div>
+  </div>
+</div>
+
+
 
 <script>
 const input = document.getElementById("distilleryInput");
@@ -132,6 +180,18 @@ if (input) {
     }
   });
 }
+
+function openAddDistilleryModal(prefillName = "") {
+  const modalEl = document.getElementById("addDistilleryModal");
+  const modal = new bootstrap.Modal(modalEl);
+
+  document.getElementById("newDistilleryName").value = prefillName;
+
+  modal.show();
+}
+
+
+
 </script>
 
 {% endblock %}

@@ -2,59 +2,209 @@
 {% block title %}Feed{% endblock %}
 {% block content %}
 
-<div class="col-lg-6 offset-lg-3 mt-4">
+<div class="col-lg-7 offset-lg-2 mt-4">
 
-    <div class="d-flex justify-content-between mb-3">
-        <h3 class="fw-bold">Whiskey Feed</h3>
-
-        <!-- Open Modal Instead of Redirecting -->
-        <button class="btn btn-whiskey" data-bs-toggle="modal" data-bs-target="#createPostModal">
-            <i class="bi bi-pencil-square"></i> Write a Post
-        </button>
+    <div class="mb-3">
+        <h3 class="fw-bold mb-0">Whiskey Feed</h3>
     </div>
 
-    {% for post in posts %}
-        <div class="card shadow-sm mb-3">
-            <div class="card-body">
-                <h6 class="fw-bold">
-                    <a href="/profile/{{ post.user.username }}/" class="text-dark text-decoration-none username-link">
-                        {{ post.user.username }}
-                    </a>
-                </h6>
-                <p>{{ post.content }}</p>
-                <p class="text-muted small">{{ post.created_at|date:"F j, g:i A" }}</p>
+    <!-- FRIEND STATS SEARCH -->
+    <form method="get" class="mb-3 position-relative" id="friendStatsForm">
+        <label class="form-label small mb-1">See a friend’s stats</label>
+        <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text"
+                   id="friendStatsInput"
+                   name="friend"
+                   class="form-control"
+                   autocomplete="off"
+                   value="{{ friend_query }}"
+                   placeholder="Search someone you follow...">
+            <button class="btn btn-whiskey" type="submit">Go</button>
+        </div>
+        <div id="friendStatsSuggestions"
+             class="list-group position-absolute w-100 shadow-sm"
+             style="z-index:1050; display:none;"></div>
+    </form>
+
+    {% if scoped_user %}
+        <div class="alert alert-info d-flex justify-content-between align-items-center py-2">
+            <span>Showing stats for <strong>{{ scoped_user.username }}</strong>.</span>
+            <a href="{% url 'feed' %}" class="btn btn-sm btn-outline-secondary">Back to site stats</a>
+        </div>
+    {% elif friend_query %}
+        <div class="alert alert-warning py-2">
+            No followed user named “{{ friend_query }}”. Showing site-wide stats.
+        </div>
+    {% endif %}
+
+    <!-- SECTION TOGGLES -->
+    <div class="card shadow-sm p-3 mb-4">
+        <div class="d-flex flex-wrap gap-3">
+            <div class="form-check form-switch">
+                <input class="form-check-input feed-toggle" type="checkbox" checked
+                       id="toggle-stats" data-target="#section-stats">
+                <label class="form-check-label small" for="toggle-stats">Site stats</label>
+            </div>
+            <div class="form-check form-switch">
+                <input class="form-check-input feed-toggle" type="checkbox" checked
+                       id="toggle-fun" data-target="#section-fun">
+                <label class="form-check-label small" for="toggle-fun">Fun stats</label>
+            </div>
+            <div class="form-check form-switch">
+                <input class="form-check-input feed-toggle" type="checkbox" checked
+                       id="toggle-friends" data-target="#section-friends">
+                <label class="form-check-label small" for="toggle-friends">Friends’ reviews</label>
+            </div>
+            <div class="form-check form-switch">
+                <input class="form-check-input feed-toggle" type="checkbox" checked
+                       id="toggle-strangers" data-target="#section-strangers">
+                <label class="form-check-label small" for="toggle-strangers">Strangers’ reviews</label>
             </div>
         </div>
-    {% empty %}
-        <p class="text-muted">No posts yet. Be the first to write one!</p>
-    {% endfor %}
-
-</div>
-
-<!-- Create Post Modal -->
-<div class="modal fade" id="createPostModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content rounded-4">
-
-      <div class="modal-header">
-        <h5 class="modal-title fw-bold">Write a Post</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-
-      <form method="POST" action="/post/create/">
-        {% csrf_token %}
-        <div class="modal-body">
-          {{ form.content }}
-        </div>
-
-        <div class="modal-footer">
-          <button type="submit" class="btn btn-whiskey w-100">
-            Post
-          </button>
-        </div>
-      </form>
-
     </div>
-  </div>
+
+    <!-- SITE STATS -->
+    <div id="section-stats" class="card shadow-sm p-3 mb-4">
+        <h5 class="fw-bold mb-3">
+            {% if scoped_user %}{{ scoped_user.username }}’s Stats{% else %}Site Stats{% endif %}
+        </h5>
+        <div class="row text-center g-3">
+            <div class="col-6 col-md-3">
+                <div class="fs-4 fw-bold text-whiskey">{{ stats.reviews_count }}</div>
+                <div class="text-muted small">Bottles rated</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="fs-4 fw-bold text-whiskey">{{ stats.unique_bottles }}</div>
+                <div class="text-muted small">Unique bottles</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="fs-4 fw-bold text-whiskey">{{ stats.total_bottles }}</div>
+                <div class="text-muted small">{% if scoped_user %}Bottles owned{% else %}Bottles in inventories{% endif %}</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="fs-4 fw-bold text-whiskey">${{ stats.total_value|floatformat:0 }}</div>
+                <div class="text-muted small">Total collection value</div>
+            </div>
+        </div>
+        <div class="d-flex justify-content-center gap-2 mt-3 flex-wrap">
+            <span class="badge bg-light text-dark border">Unopened: {{ stats.unopened }}</span>
+            <span class="badge bg-light text-dark border">Opened: {{ stats.opened }}</span>
+            <span class="badge bg-light text-dark border">Finished: {{ stats.finished }}</span>
+        </div>
+    </div>
+
+    <!-- FUN STATS -->
+    <div id="section-fun" class="card shadow-sm p-3 mb-4">
+        <h5 class="fw-bold mb-3">
+            Just for Fun 🥃
+            {% if scoped_user %}<span class="text-muted fs-6">— {{ scoped_user.username }}’s cabinet</span>{% endif %}
+        </h5>
+        <ul class="list-group list-group-flush">
+            <li class="list-group-item d-flex justify-content-between">
+                <span>🛢️ Whiskey stored on-site</span>
+                <span class="fw-bold">{{ stats.barrels|floatformat:1 }} barrels
+                    <span class="text-muted small">({{ stats.total_volume_l|floatformat:0 }} L)</span></span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>🥃 Whiskey already enjoyed</span>
+                <span class="fw-bold">{{ stats.consumed_l|floatformat:1 }} L
+                    <span class="text-muted small">(~{{ stats.consumed_bottles_equiv|floatformat:0 }} bottles)</span></span>
+            </li>
+            <li class="list-group-item d-flex justify-content-between">
+                <span>📈 If invested in the S&P 500 for {{ stats.fund_years }} years
+                    <span class="text-muted small">(~{{ stats.fund_return_pct }}%/yr)</span></span>
+                <span class="fw-bold">${{ stats.fund_value|floatformat:0 }}</span>
+            </li>
+        </ul>
+        <div class="text-muted small mt-2">
+            Estimates assume 750ml bottles and ~200L barrels. Drink responsibly.
+        </div>
+    </div>
+
+    <!-- FRIENDS' REVIEWS -->
+    <div id="section-friends" class="mb-4">
+        <h5 class="fw-bold mb-2">Recent Reviews — People You Follow</h5>
+        {% for r in friend_reviews %}
+            {% include "accounts/_review_card.html" with r=r %}
+        {% empty %}
+            <p class="text-muted">No reviews from people you follow yet.</p>
+        {% endfor %}
+    </div>
+
+    <!-- STRANGERS' REVIEWS -->
+    <div id="section-strangers" class="mb-4">
+        <h5 class="fw-bold mb-2">Recent Reviews — Around the Community</h5>
+        {% for r in stranger_reviews %}
+            {% include "accounts/_review_card.html" with r=r %}
+        {% empty %}
+            <p class="text-muted">No community reviews yet.</p>
+        {% endfor %}
+    </div>
+
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    // --- Friend stats autocomplete ---
+    const fInput = document.getElementById("friendStatsInput");
+    const fSuggestions = document.getElementById("friendStatsSuggestions");
+    if (fInput && fSuggestions) {
+        fInput.addEventListener("input", async () => {
+            const q = fInput.value.trim();
+            if (q.length < 2) {
+                fSuggestions.style.display = "none";
+                return;
+            }
+            const res = await fetch(`{% url 'feed_friend_search' %}?q=${encodeURIComponent(q)}`);
+            const data = await res.json();
+            fSuggestions.innerHTML = "";
+            if (data.length === 0) {
+                const empty = document.createElement("div");
+                empty.className = "list-group-item text-muted small";
+                empty.textContent = "No matching friends.";
+                fSuggestions.appendChild(empty);
+            } else {
+                data.forEach(u => {
+                    const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = "list-group-item list-group-item-action";
+                    btn.textContent = u.username;
+                    btn.onclick = () => {
+                        fInput.value = u.username;
+                        fSuggestions.style.display = "none";
+                        document.getElementById("friendStatsForm").submit();
+                    };
+                    fSuggestions.appendChild(btn);
+                });
+            }
+            fSuggestions.style.display = "block";
+        });
+
+        document.addEventListener("click", e => {
+            if (!fSuggestions.contains(e.target) && e.target !== fInput) {
+                fSuggestions.style.display = "none";
+            }
+        });
+    }
+
+    // --- Section toggles ---
+    document.querySelectorAll(".feed-toggle").forEach(toggle => {
+        const target = document.querySelector(toggle.dataset.target);
+        const key = "feed:" + toggle.id;
+
+        // Restore saved state.
+        if (localStorage.getItem(key) === "0") {
+            toggle.checked = false;
+            if (target) target.style.display = "none";
+        }
+
+        toggle.addEventListener("change", () => {
+            if (target) target.style.display = toggle.checked ? "" : "none";
+            localStorage.setItem(key, toggle.checked ? "1" : "0");
+        });
+    });
+});
+</script>
+
 {% endblock %}

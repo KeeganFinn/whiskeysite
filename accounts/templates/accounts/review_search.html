@@ -65,23 +65,27 @@
       </div>
     {% endif %}
 
-    {% if q and not bottles %}
+    {% if q %}
       <div class="card shadow-sm p-3">
-        <div class="fw-bold mb-1">No bottles found</div>
-
-        <div class="text-muted small mb-3">
-          Can’t find what you’re looking for?
-          You can add the bottle and review it — even if you only had a pour.
-        </div>
+        {% if bottles %}
+          <div class="fw-bold mb-1">Don’t see the bottle you want?</div>
+          <div class="text-muted small mb-3">
+            None of these match? Add the exact bottle you had — even if you only got a pour.
+          </div>
+        {% else %}
+          <div class="fw-bold mb-1">No bottles found</div>
+          <div class="text-muted small mb-3">
+            Can’t find what you’re looking for?
+            You can add the bottle and review it — even if you only had a pour.
+          </div>
+        {% endif %}
 
         <a href="{% url 'canonical_add_and_review' %}?name={{ q|urlencode }}"
            class="btn btn-whiskey btn-sm">
-          Add & Review Bottle
+          Add &amp; Review “{{ q }}”
         </a>
       </div>
-    {% endif %}
-
-    {% if not q and not bottles %}
+    {% else %}
       <p class="text-muted">Search for a bottle to start reviewing.</p>
     {% endif %}
 
