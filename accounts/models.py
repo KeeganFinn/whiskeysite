@@ -37,6 +37,21 @@ class UserProfile(models.Model):
     def __str__(self):
         return self.user.username
 
+    @property
+    def avatar_url(self):
+        """URL to show for this profile's avatar.
+
+        Falls back to a bundled static image when the user hasn't uploaded one,
+        so avatars never break just because the (ephemeral) media volume is
+        empty. Real uploads are served from MEDIA as usual.
+        """
+        from django.templatetags.static import static
+
+        name = getattr(self.avatar, "name", "") or ""
+        if not name or name == "default/avatar.png":
+            return static("accounts/img/default-avatar.svg")
+        return self.avatar.url
+
 
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):

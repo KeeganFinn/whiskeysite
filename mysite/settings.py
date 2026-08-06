@@ -191,8 +191,9 @@ STORAGES = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
     },
     "staticfiles": {
-        # Compresses static files and adds cache-busting hashes.
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        # Compresses static files (gzip/brotli). Non-manifest variant so a
+        # missing/renamed reference can't hard-fail collectstatic or page loads.
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
     },
 }
 
