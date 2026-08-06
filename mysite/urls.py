@@ -15,14 +15,20 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
-from django.conf.urls.static import static
+from django.views.static import serve as media_serve
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('accounts.urls')),
 ]
 
-
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve user-uploaded media (avatars). Django's built-in `static()` helper only
+# wires this up when DEBUG=True, and WhiteNoise handles static files only — so in
+# production nothing serves /media/ and uploads 404. Route it through Django's
+# serve view instead, which works with DEBUG on or off. This is fine for a
+# low-traffic app; move to object storage / a CDN if media ever gets heavy.
+urlpatterns += [
+    re_path(r"^media/(?P<path>.*)$", media_serve, {"document_root": settings.MEDIA_ROOT}),
+]

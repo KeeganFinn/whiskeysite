@@ -586,6 +586,18 @@ class LoginRequiredTests(TestCase):
         self._assert_redirects_to_login("profile_settings")
 
 
+class MediaServingTests(TestCase):
+    """Uploaded media must be routed to a view (Django's static() helper drops
+    the route when DEBUG=False, which 404'd avatars in production)."""
+
+    def test_media_route_is_wired_up(self):
+        from django.urls import resolve
+        from django.views.static import serve
+
+        match = resolve("/media/profile_pics/user_1/pic.png")
+        self.assertEqual(match.func, serve)
+
+
 class EventVisibilityTests(TestCase):
     """Friends-only events must not be viewable by outsiders via direct URL."""
 
