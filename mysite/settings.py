@@ -75,6 +75,14 @@ CSRF_TRUSTED_ORIGINS = [
     if o.strip()
 ]
 
+# Railway injects the app's public domain at runtime. Trust it automatically so
+# the first deploy works without having to hardcode the generated *.railway.app
+# hostname in the env vars above.
+_railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+if _railway_domain:
+    ALLOWED_HOSTS.append(_railway_domain)
+    CSRF_TRUSTED_ORIGINS.append(f"https://{_railway_domain}")
+
 
 # Application definition
 
@@ -90,6 +98,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # WhiteNoise serves static files in production; must sit right after Security.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -121,11 +131,17 @@ WSGI_APPLICATION = 'mysite.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+import dj_database_url
+
+# Reads the DATABASE_URL env var (e.g. Railway's managed Postgres). When it's
+# unset — i.e. local development — this falls back to the bundled SQLite file,
+# so nothing changes for local work.
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    "default": dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,        # reuse connections instead of reconnecting each request
+        conn_health_checks=True,
+    )
 }
 
 LOGIN_URL = "/login/"
@@ -167,9 +183,24 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+# Destination for `collectstatic` in production; WhiteNoise serves from here.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        # Compresses static files and adds cache-busting hashes.
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# User uploads (avatars). On hosts with an ephemeral filesystem these are lost on
+# redeploy, so point DJANGO_MEDIA_ROOT at a persistent volume (or use object
+# storage) in production. Defaults to a local folder for development.
+MEDIA_ROOT = os.environ.get("DJANGO_MEDIA_ROOT", "").strip() or (BASE_DIR / 'media')
 
 
 # --- Security hardening --------------------------------------------------
